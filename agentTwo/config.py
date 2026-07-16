@@ -16,11 +16,11 @@ from pathlib import Path
 OLLAMA_URL: str = "http://localhost:11434/api/chat"
 
 #: Default model identifier (any tool-capable Ollama model works).
-#DEFAULT_MODEL: str = "minimax-m3:cloud"
+DEFAULT_MODEL: str = "minimax-m3:cloud"
 #DEFAULT_MODEL: str = "kimi-k2.7-code:cloud"
 #DEFAULT_MODEL: str = "glm-5.2:cloud"
 #DEFAULT_MODEL: str = "deepseek-v4-pro:cloud"
-DEFAULT_MODEL: str = "deepseek-v4-flash:cloud"
+#DEFAULT_MODEL: str = "deepseek-v4-flash:cloud"
 #DEFAULT_MODEL: str = "minimax-m2.7:cloud"
 #DEFAULT_MODEL: str = "gemma4:31b-cloud"
 
@@ -74,4 +74,4 @@ ALLOWED_EXTENSION: tuple[str, ...] = (".py", ".md", ".txt", ".json", ".scad")
 #: Path to a kdiff3-compatible diff/merge binary. Populated at startup
 #: by :func:`agentTwo.diff_tool.configure_diff_tool`. ``None`` means "ask
 #: the user at startup" / "use the text-diff fallback".
-DIFF_TOOL_PATH: str = "C:\Program Files\KDiff3\bin\kdiff3.exe"
+DIFF_TOOL_PATH: str = "C:/Program Files/KDiff3/bin/kdiff3.exe"

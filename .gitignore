@@ -1,3 +1,5 @@
 /agentTwo/__pycache__
 /agentTwo/*.log
 /agentTwo/tests/__pycache__
+/agentThree/__pycache__
+/agentThree/*.log
