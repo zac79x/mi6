@@ -3,7 +3,7 @@ chat-completions endpoint with tool calling, plus the compaction and
 result-cache machinery that keeps long conversations affordable.
 
 The agent is intentionally transport-agnostic with respect to the
-tool implementations: every callable registered via :func:`agent.tool`
+tool implementations: every callable registered via :func:`agentTwo.tool`
 is reachable by name through :attr:`agentTwo.tool_map`.
 """
 
@@ -16,21 +16,21 @@ from typing import Any
 
 import requests
 
-from agent.config import DEFAULT_MODEL, OLLAMA_URL
-from agent.approval import request_continue_approval
-from agent.logging_setup import (
+from agentTwo.config import DEFAULT_MODEL, OLLAMA_URL
+from agentTwo.approval import request_continue_approval
+from agentTwo.logging_setup import (
     llm_payload_logger,
     logger,
     safe_json,
     truncate,
 )
-from agent.tools_registry import Tool, _TOOL_REGISTRY
+from agentTwo.tools_registry import Tool, _TOOL_REGISTRY
 
 # Human-friendly CLI helpers: ANSI colours (graceful degradation).  The
 # import is soft: if `cli_ui` is somehow missing the agent still runs with
 # plain (uncoloured) output.
 try:
-    from agent.cli_ui import c as _colour, colours_enabled as _colours_enabled, Spinner
+    from agentTwo.cli_ui import c as _colour, colours_enabled as _colours_enabled, Spinner
 except ImportError:  # pragma: no cover - cli_ui should always be present
     def _colour(text, *styles):
         return text
@@ -68,7 +68,7 @@ CACHE_REF_HEX_LEN = 8
 
 # Name of the special tool the model can call to fetch a cached
 # result back. Registered globally via ``@tool`` in
-# :mod:`agent.tools_misc`, but its implementation lives here so that
+# :mod:`agentTwo.tools_misc`, but its implementation lives here so that
 # the lookup is per-agent (the cache is a per-agent attribute).
 RECALL_CACHED_RESULT = "recall_cached_result"
 
@@ -579,7 +579,7 @@ class agentTwo:
 
         Lives on the agent (rather than as a free function) because the
         cache is a per-agent attribute. The tool is registered globally
-        by :mod:`agent.tools_misc` so the model can see it in the
+        by :mod:`agentTwo.tools_misc` so the model can see it in the
         schema; here we just intercept the call and look the ref up in
         ``self._result_cache``.
         """

@@ -7,26 +7,26 @@ log lines without worrying about size or serialisability.
 
 Log layout (as of the "split the noisy stuff out of agent.log" change):
 
-* ``agent/agent.log`` (the :data:`agent.config.LOG_FILE`) - the main
-  log.  Receives the root ``agent`` logger's records: lifecycle
+* ``agentTwo/agent.log`` (the :data:`agentTwo.config.LOG_FILE`) - the main
+  log.  Receives the root ``agentTwo`` logger's records: lifecycle
   events, tool-call summaries, compaction stats, errors, and a
   one-line summary of every HTTP exchange with the LLM.  Suitable
   for ``tail -f`` even on long sessions.
 
-* ``agent/agent.http.log`` (the :data:`agent.config.HTTP_LOG_FILE`) -
+* ``agentTwo/agent.http.log`` (the :data:`agentTwo.config.HTTP_LOG_FILE`) -
   receives the ``ollama_agent.http`` sub-logger's records: the full
   request and response bodies for every Ollama call.  Each call can
   be hundreds of KB of pretty-printed JSON, so this is kept off the
   main log.
 
-* ``agent/agent.llm_payload.log`` (the
-  :data:`agent.config.LLM_PAYLOAD_LOG_FILE`) - receives the
+* ``agentTwo/agent.llm_payload.log`` (the
+  :data:`agentTwo.config.LLM_PAYLOAD_LOG_FILE`) - receives the
   ``ollama_agent.llm_payload`` sub-logger's records: the full JSON
   payload sent to the LLM, banner-delimited.  Useful for replaying
   or diffing prompts between runs.
 
 The sub-loggers have ``propagate=False`` so their records do not
-also land in the main log; the root ``agent`` logger's own
+also land in the main log; the root ``agentTwo`` logger's own
 DEBUG-level lines (e.g. compaction stats) still go to ``agent.log``.
 """
 
@@ -36,7 +36,7 @@ import json
 import logging
 from typing import Any
 
-from agent.config import (
+from agentTwo.config import (
     HTTP_LOG_FILE,
     LLM_PAYLOAD_LOG_FILE,
     LOG_FILE,
@@ -47,7 +47,7 @@ from agent.config import (
 
 # Root logger for the agent. Captures everything; per-handler levels
 # control what is actually persisted/displayed.
-logger = logging.getLogger("agent")
+logger = logging.getLogger("agentTwo")
 logger.setLevel(logging.DEBUG)
 
 # Reset any existing handlers (useful when re-importing in notebooks/tests)
@@ -69,7 +69,7 @@ def _add_sublogger_file_handler(
     level: int = logging.DEBUG,
 ) -> None:
     """Wire a sub-logger to its own file and stop it from propagating
-    to the root ``agent`` logger.
+    to the root ``agentTwo`` logger.
 
     The default behaviour of :mod:`logging` is for sub-loggers to
     forward their records up to the root logger (and therefore to

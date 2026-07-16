@@ -1,4 +1,4 @@
-"""Human-friendly interactive CLI helpers for the ``agent`` package.
+"""Human-friendly interactive CLI helpers for the ``agentTwo`` package.
 
 This is the package-side companion of the standalone ``cli_ui.py`` that
 ships next to ``agentNew.py``.  It provides:
@@ -256,7 +256,7 @@ class AgentCompleter(Completer if _HAS_PTK else object):  # type: ignore[misc]
 
     # (command, short description) - shown as the meta line in the
     # completion menu.  Kept in sync with the commands handled in
-    # ``agent.repl._handle_command`` and the main loop in ``main()``.
+    # ``agentTwo.repl._handle_command`` and the main loop in ``main()``.
     SLASH_COMMANDS = [
         ("/help",      "show this help message"),
         ("/?",         "show this help message"),
@@ -332,7 +332,7 @@ class ColouredPrompt:
     ``bottom_toolbar`` optionally takes a zero-argument callable (or
     plain string) that ``prompt_toolkit`` renders as a live,
     persistent status line underneath the input area while the prompt
-    is waiting for input.  This is how the :class:`~agent.agent.Agent`
+    is waiting for input.  This is how the :class:`~agentTwo.agent.Agent`
     status bar (``Agent.render_status_bar``) is displayed as a real
     on-screen UI element rather than as transient printed lines.  The
     toolbar is only shown by the ``prompt_toolkit`` backend; the plain

@@ -6,7 +6,7 @@ Currently owns:
   the agent running after it hits ``max_iterations`` without a final
   answer.
 
-This module exists so that :mod:`agent.diff_tool` stays focused on its
+This module exists so that :mod:`agentTwo.diff_tool` stays focused on its
 name (diff rendering, external-tool configuration, diff-then-approve
 workflow) rather than acting as a catch-all for every interactive
 prompt.

@@ -1,5 +1,5 @@
 """Diagnostic: dump the state of the agent after the first wire-build."""
-from agent import agentTwo, DEFAULT_MODEL, CACHE_THRESHOLD_CHARS
+from agentTwo import agentTwo, DEFAULT_MODEL, CACHE_THRESHOLD_CHARS
 
 a = agentTwo(model=DEFAULT_MODEL, verbose=False)
 print(f"a._result_cache at start: {list(a._result_cache.items())[:3]}")

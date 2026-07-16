@@ -7,8 +7,8 @@ an agentTwo and a string).
 import json
 import sys
 
-from agent.agent import agentTwo, CACHE_THRESHOLD_CHARS
-from agent.repl import _handle_command
+from agentTwo.agent import agentTwo, CACHE_THRESHOLD_CHARS
+from agentTwo.repl import _handle_command
 
 
 def section(title):

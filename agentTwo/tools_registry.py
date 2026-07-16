@@ -13,7 +13,7 @@ import inspect
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from agent.logging_setup import logger
+from agentTwo.logging_setup import logger
 
 # Python type -> JSON Schema type
 _TYPE_MAP: dict[type, str] = {

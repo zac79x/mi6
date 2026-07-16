@@ -1,12 +1,12 @@
-# agent
+# agentTwo
 
 A small Python agent framework that uses an **Ollama** chat API with tool
 calling. It runs an interactive REPL, shows a live status bar (model, state,
 token usage, call counts), and can compact long conversations by caching
 large tool results and deduplicating consecutive duplicates.
 
-The agent class is **`agentTwo`**, defined in `agent/agent.py` and re-exported
-from the top-level package.
+The agent class is **`agentTwo`**, defined in `agentTwo/agent.py` and
+re-exported from the top-level package.
 
 ## Requirements
 
@@ -40,20 +40,20 @@ ollama serve
 ```
 
 By default the agent expects Ollama at `http://localhost:11434/api/chat`
-(this is `OLLAMA_URL` in `agent/config.py`). The REPL also probes
+(this is `OLLAMA_URL` in `agentTwo/config.py`). The REPL also probes
 `http://localhost:11434/api/tags` at startup to confirm the server is
 reachable, and exits with a clear message if it is not.
 
 ### 3. Choose / pull a model
 
-The default model is configured by `DEFAULT_MODEL` in `agent/config.py`. Any
+The default model is configured by `DEFAULT_MODEL` in `agentTwo/config.py`. Any
 tool-capable Ollama model works. Pull one if you have not already, e.g.:
 
 ```bash
 ollama pull glm-5.2:cloud
 ```
 
-To use a different model, either edit `DEFAULT_MODEL` in `agent/config.py`
+To use a different model, either edit `DEFAULT_MODEL` in `agentTwo/config.py`
 before starting, or change it at runtime with the `/model`-equivalent by
 editing the source (the REPL does not currently expose a live `/model`
 command — model and server URL are read from `config.py` at startup).
@@ -71,13 +71,13 @@ text-based diff fallback is used.
 From the repository root:
 
 ```bash
-python -m agent
+python -m agentTwo
 ```
 
 Or run the module directly:
 
 ```bash
-python -m agent.agent
+python -m agentTwo.agent
 ```
 
 The agent will prompt you for input. Type `/help` (or `?`) to see the
@@ -189,28 +189,28 @@ in-process memory. The full bytes stay reachable via the result cache and the
 ## Extending the agent with tools
 
 New tools are registered with the global `@tool` decorator from
-`agent.tools_registry`. The built-in tools live in two modules that are
+`agentTwo.tools_registry`. The built-in tools live in two modules that are
 imported (and therefore auto-registered) by the package `__init__.py`:
 
-- `agent/tools_misc.py` - `calculate`, `get_current_time`, `word_count`,
+- `agentTwo/tools_misc.py` - `calculate`, `get_current_time`, `word_count`,
   `recall_cached_result` (and a fallback `c`, `colours_enabled`, `Spinner`
   shim is provided by `cli_ui`).
-- `agent/tools_filesystem.py` - filesystem tools (`read_text_file`,
+- `agentTwo/tools_filesystem.py` - filesystem tools (`read_text_file`,
   `read_file_lines`, `list_directory`, `path_exists`, `create_file`,
   `update_file`, `compile_python_file`).
 
 To add your own tool, define a function decorated with `@tool` in any module
-that is imported at startup (or import it from `agent/__init__.py`). See
+that is imported at startup (or import it from `agentTwo/__init__.py`). See
 `tools_registry.py` for the exact decorator usage and JSON schema helpers.
 
 ## Project layout
 
 ```
-agent/
+agentTwo/
   __init__.py         - Package init; imports submodules (which registers the
                         built-in tools), and re-exports agentTwo, main, tool,
                         DEFAULT_MODEL, OLLAMA_URL, LOG_FILE, WORKSPACE_ROOT.
-  __main__.py         - `python -m agent` entry point.
+  __main__.py         - `python -m agentTwo` entry point.
   agent.py            - The agentTwo class: core loop, Ollama HTTP calls,
                         compaction, result cache, session save/restore,
                         status bar.

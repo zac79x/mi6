@@ -1,12 +1,12 @@
-"""Functional check that 'python -m agent' still works after the
+"""Functional check that 'python -m agentTwo' still works after the
 removal of agent.statemachine_agent. Doesn't talk to Ollama; just
 exercises the import path and agentTwo construction.
 """
 import sys
 
 # 1. The whole package must import without error.
-print("[1] import agent ...", end=" ")
-import agent
+print("[1] import agentTwo ...", end=" ")
+import agentTwo
 print("ok")
 
 # 2. The public API (post-removal) must be exactly what __init__.py advertises.
@@ -20,7 +20,7 @@ expected = {
     "main",
     "tool",
 }
-got = set(agent.__all__)
+got = set(agentTwo.__all__)
 missing = expected - got
 extra   = got - expected
 assert not missing, f"missing from __all__: {missing}"
@@ -31,25 +31,25 @@ print("ok (exact match:", sorted(got), ")")
 print("[3] removed names are gone ...", end=" ")
 for removed in ("StateMachineAgent", "AgentStateMachine", "RunResult",
                 "default_model_router", "parse_plan", "statemachine_agent"):
-    assert not hasattr(agent, removed), f"{removed!r} should not exist on agent"
-    assert removed not in dir(agent),   f"{removed!r} leaked into dir(agent)"
+    assert not hasattr(agentTwo, removed), f"{removed!r} should not exist on agentTwo"
+    assert removed not in dir(agentTwo),   f"{removed!r} leaked into dir(agentTwo)"
 print("ok")
 
 # 4. The submodule attribute must be gone (no fallback to importing it).
 print("[4] no submodule leak ...", end=" ")
-assert "statemachine_agent" not in agent.__dict__, \
+assert "statemachine_agent" not in agentTwo.__dict__, \
     "statemachine_agent should not be a submodule attribute"
 print("ok")
 
 # 5. main() must be the REPL's main.
-print("[5] from agent import main, agentTwo, tool ...", end=" ")
-from agent import main, agentTwo, tool
-from agent.config import DEFAULT_MODEL, OLLAMA_URL, LOG_FILE, WORKSPACE_ROOT
+print("[5] from agentTwo import main, agentTwo, tool ...", end=" ")
+from agentTwo import main, agentTwo, tool
+from agentTwo.config import DEFAULT_MODEL, OLLAMA_URL, LOG_FILE, WORKSPACE_ROOT
 print("ok")
 
 # 6. The tool registry must be populated by the side-effect imports.
 print("[6] tool registry populated ...", end=" ")
-from agent.tools_registry import _TOOL_REGISTRY
+from agentTwo.tools_registry import _TOOL_REGISTRY
 expected_tools = {
     "calculate", "get_current_time", "word_count", "recall_cached_result",
     "read_text_file", "read_file_lines", "list_directory", "path_exists",
@@ -92,16 +92,16 @@ assert report["chars_saved"] > 0
 assert len(a._result_cache) == 1
 print(f"ok (saved {report['chars_saved']} chars, cache now {len(a._result_cache)})")
 
-# 9. __main__ must be importable (the actual 'python -m agent' entry
+# 9. __main__ must be importable (the actual 'python -m agentTwo' entry
 #    point - it must not be broken by our edits).
-print("[9] import agent.__main__ ...", end=" ")
-import agent.__main__  # noqa: F401
+print("[9] import agentTwo.__main__ ...", end=" ")
+import agentTwo.__main__  # noqa: F401
 print("ok")
 
 # 10. REPL command handler should still recognise all the documented
 #     commands, and not crash on the new ones.
 print("[10] repl._handle_command ...", end=" ")
-from agent.repl import _handle_command
+from agentTwo.repl import _handle_command
 # Reset state
 a.reset()
 # All known commands should be handled (return True).

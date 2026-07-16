@@ -21,9 +21,9 @@ import traceback
 
 
 def main() -> int:
-    print("step 1: import agent package ...")
+    print("step 1: import agentTwo package ...")
     try:
-        import agent
+        import agentTwo
     except Exception:
         traceback.print_exc()
         return 1
@@ -31,7 +31,7 @@ def main() -> int:
 
     print("step 2: import agentTwo class directly ...")
     try:
-        from agent.agent import agentTwo
+        from agentTwo.agent import agentTwo
     except Exception:
         traceback.print_exc()
         return 2
@@ -95,7 +95,7 @@ def main() -> int:
     print("  ok")
 
     print("step 8: Tool dataclass has permission field ...")
-    from agent.tools_registry import Tool
+    from agentTwo.tools_registry import Tool
     if not hasattr(Tool, "permission"):
         print("  FAIL: Tool has no 'permission' field")
         return 8
@@ -106,8 +106,8 @@ def main() -> int:
     print("  ok")
 
     print("step 9: filesystem tools declare permission='ask' ...")
-    from agent.tools_filesystem import create_file, update_file  # noqa: F401
-    from agent.tools_registry import _TOOL_REGISTRY
+    from agentTwo.tools_filesystem import create_file, update_file  # noqa: F401
+    from agentTwo.tools_registry import _TOOL_REGISTRY
     if _TOOL_REGISTRY["create_file"].permission != "ask":
         print(f"  FAIL: create_file permission is {_TOOL_REGISTRY['create_file'].permission!r}")
         return 9

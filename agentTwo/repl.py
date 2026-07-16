@@ -1,8 +1,8 @@
 """This module owns the ``main()`` entry point: it prints the startup
-banner, configures the diff tool, instantiates the :class:`agentTwo`, and
-runs the read-eval-print loop with its ``/`` commands.
+banner, instantiates the :class:`agentTwo`, and runs the read-eval-print
+loop with its ``/`` commands.
 
-The REPL uses the human-friendly CLI helpers from :mod:`agent.cli_ui`:
+The REPL uses the human-friendly CLI helpers from :mod:`agentTwo.cli_ui`:
 ANSI colours (graceful degradation on non-TTY terminals), semantic
 printers and a prompt_toolkit-backed prompt with tab completion for
 the slash commands.  When ``prompt_toolkit`` is not installed the
@@ -15,8 +15,8 @@ import os
 
 import requests
 
-from agent.agent import agentTwo, DEFAULT_SESSION_FILE
-from agent.cli_ui import (
+from agentTwo.agent import agentTwo, DEFAULT_SESSION_FILE
+from agentTwo.cli_ui import (
     AgentCompleter,
     ColouredPrompt,
     c,
@@ -29,18 +29,14 @@ from agent.cli_ui import (
     dim as ui_dim,
     banner as ui_banner,
 )
-from agent.config import (
+from agentTwo.config import (
     DEFAULT_MODEL,
     DIFF_TOOL_PATH,
     LOG_FILE,
     OLLAMA_URL,
 )
-from agent.diff_tool import (
-    configure_diff_tool,
-    set_kdiff3_path_interactively,
-)
-from agent.logging_setup import logger
-from agent.tools_registry import _TOOL_REGISTRY
+from agentTwo.logging_setup import logger
+from agentTwo.tools_registry import _TOOL_REGISTRY
 
 # --------------------------------------------------------------------------- #
 # cli_ui fallbacks
@@ -79,9 +75,6 @@ Commands:
   /temp <value>     set sampling temperature, e.g. /temp 0.7  (blank = default)
   /max_iter <n>     set max tool-calling iterations, e.g. /max_iter 10
   /think on|off     enable/disable display of the model's chain-of-thought
-  /kdiff [<path>]   set the kdiff3 binary path in .env (KDIFF3_PATH=...).
-                    With no argument, prompts for the path interactively.
-                    Updates the running session immediately.
   /compact          compact the in-memory conversation history in place
                     (cache large tool results, dedup consecutive duplicates,
                     strip 'thinking'). Full bytes stay reachable via the
@@ -96,7 +89,7 @@ Commands:
                     .agent_session_state.json in the current directory.
 
 The prompt supports TAB completion for the slash commands above and their
-arguments (e.g. /think on|off, /kdiff <file>, /save <file>).  Output is
+arguments (e.g. /think on|off, /save <file>).  Output is
 colourised when the terminal supports it; set NO_COLOR=1 to disable colours.
 """
 
@@ -124,9 +117,9 @@ def _local_files() -> list[str]:
     """Return a sorted list of files in the current directory.
 
     Used to feed tab completion for the path-taking slash commands
-    (``/kdiff`` wants ``*.py``, ``/save`` / ``/restore`` want ``*.json``).
-    The completer itself filters by extension based on the command being
-    completed, so we can hand it a single combined list here.
+    (``/save`` / ``/restore`` want ``*.json``).  The completer itself
+    filters by extension based on the command being completed, so we
+    can hand it a single combined list here.
     """
     try:
         return sorted(
@@ -211,9 +204,6 @@ def _handle_command(cmd: str, agent: agentTwo) -> bool:
         logger.info("User %s thinking display", "enabled" if new_state else "disabled")
         print()
         return True
-
-    if head == "/kdiff":
-        return set_kdiff3_path_interactively(parts, env_path=".env")
 
     if head == "/compact":
         # Run the same passes the wire-compaction helper uses, but on
@@ -342,9 +332,6 @@ def main() -> None:
     print(c(f"Logfile: {os.path.abspath(LOG_FILE)}", "gray"))
     print()
     _print_help()
-
-    # Ask the user where the diff tool is located (used by update_file).
-    configure_diff_tool()
 
     logger.info("Agent started | model=%s | url=%s | diff_tool=%s | tools=%s",
                 DEFAULT_MODEL, OLLAMA_URL, DIFF_TOOL_PATH,

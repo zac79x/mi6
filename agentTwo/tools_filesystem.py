@@ -1,11 +1,11 @@
 """Filesystem-oriented tools.
 
 Two of them (``create_file`` and ``update_file``) mutate the workspace
-and therefore go through :func:`agent.safety.validate_path`. The rest
+and therefore go through :func:`agentTwo.safety.validate_path`. The rest
 are read-only inspection helpers.
 
 The ``update_file`` tool uses the diff-then-approve workflow defined in
-:mod:`agent.diff_tool`.
+:mod:`agentTwo.diff_tool`.
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ import py_compile
 import tempfile
 from typing import Union
 
-from agent.diff_tool import run_diff_tool, request_update_approval
-from agent.logging_setup import logger
-from agent.safety import validate_path
-from agent.tools_registry import tool
+from agentTwo.diff_tool import run_diff_tool, request_update_approval
+from agentTwo.logging_setup import logger
+from agentTwo.safety import validate_path
+from agentTwo.tools_registry import tool
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ def create_file(path: str, content: str) -> dict:
     """Create a NEW file. Does NOT require user approval.
 
     Only workspace paths whose suffix is one of the allowed extensions
-    (see :data:`agent.config.ALLOWED_EXTENSION`) may be created. Refuses
+    (see :data:`agentTwo.config.ALLOWED_EXTENSION`) may be created. Refuses
     to overwrite an existing file - use :func:`update_file` for that.
     """
     try:
@@ -178,7 +178,7 @@ def update_file(path: str, content: str) -> dict:
     """Update an EXISTING file after showing the user a diff.
 
     Only workspace paths whose suffix is one of the allowed extensions
-    (see :data:`agent.config.ALLOWED_EXTENSION`) may be modified.
+    (see :data:`agentTwo.config.ALLOWED_EXTENSION`) may be modified.
 
     Workflow:
         1. Validate that ``path`` has an allowed extension, stays

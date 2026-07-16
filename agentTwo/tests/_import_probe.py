@@ -5,7 +5,7 @@ Run:  python _import_probe.py
 import sys
 
 # Probe 1: importing the package must not raise.
-from agent import agentTwo, main, tool, DEFAULT_MODEL, OLLAMA_URL, LOG_FILE, WORKSPACE_ROOT
+from agentTwo import agentTwo, main, tool, DEFAULT_MODEL, OLLAMA_URL, LOG_FILE, WORKSPACE_ROOT
 print("import OK")
 print(f"  agentTwo        = {agentTwo}")
 print(f"  main           = {main}")
@@ -17,7 +17,7 @@ print(f"  WORKSPACE_ROOT = {WORKSPACE_ROOT}")
 
 # Probe 2: the agent module must expose the Ollama-specific bits we expect
 # (this is the contract that the previous turn's bugfix relies on).
-from agent.agent import (
+from agentTwo.agent import (
     agentTwo as _A,
     RECALL_CACHED_RESULT,
     CACHE_THRESHOLD_CHARS,
@@ -42,7 +42,7 @@ print("  agentTwo has all expected methods")
 
 # Probe 4: tools must be registered (importing the package triggers
 # tools_misc and tools_filesystem to register their @tool functions).
-from agent.tools_registry import _TOOL_REGISTRY
+from agentTwo.tools_registry import _TOOL_REGISTRY
 expected = {
     "calculate", "get_current_time", "word_count",
     "read_text_file", "read_file_lines", "list_directory", "path_exists",
@@ -70,7 +70,7 @@ print(f"  tool_map has {len(a.tool_map)} tools")
 import json
 import os
 
-probe_path = os.path.abspath("agent/agent.py")
+probe_path = os.path.abspath("agentTwo/agent.py")
 with open(probe_path, "r", encoding="utf-8") as fh:
     big = fh.read()
 assert len(big) > CACHE_THRESHOLD_CHARS, "probe needs a large file"

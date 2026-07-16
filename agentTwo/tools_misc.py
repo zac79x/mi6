@@ -1,11 +1,11 @@
 """Miscellaneous built-in tools (``calculate``, ``get_current_time``,
 ``word_count``, ``recall_cached_result``). These are loaded by
-:mod:`agent` at import time so that the global tool registry is
+:mod:`agentTwo` at import time so that the global tool registry is
 populated before the :class:`agentTwo` is constructed.
 
 The ``recall_cached_result`` tool is a small exception: it is
 registered here (so the model sees a stable schema) but its actual
-implementation lives on :class:`agent.agent.agentTwo` because the
+implementation lives on :class:`agentTwo.agent.agentTwo` because the
 underlying cache is a per-agent attribute. The agent intercepts
 calls to it in ``_execute_tool_call`` before they reach the global
 registry.
@@ -18,7 +18,7 @@ import operator
 import time
 from typing import Any
 
-from agent.tools_registry import tool
+from agentTwo.tools_registry import tool
 
 _SAFE_OPS: dict[type, Any] = {
     ast.Add: operator.add, ast.Sub: operator.sub,

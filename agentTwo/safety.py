@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.config import ALLOWED_EXTENSION, WORKSPACE_ROOT
+from agentTwo.config import ALLOWED_EXTENSION, WORKSPACE_ROOT
 
 
 def validate_path(path: str) -> Path:
@@ -19,7 +19,7 @@ def validate_path(path: str) -> Path:
     Raises:
         ValueError: if the path is outside the workspace, does not end
             with one of the allowed extensions (see
-            :data:`agent.config.ALLOWED_EXTENSION`), or points to an
+            :data:`agentTwo.config.ALLOWED_EXTENSION`), or points to an
             existing non-file (e.g. a directory).
     """
     if not path.endswith(ALLOWED_EXTENSION):
