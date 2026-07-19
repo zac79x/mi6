@@ -25,6 +25,7 @@ Or programmatically::
 """
 
 from orchestrator.orchestrator import Orchestrator, BenchmarkTask, BenchmarkReport, AgentMetrics, TaskResult
+from orchestrator.improve_mode import ImproveMode
 
 __all__ = [
     "Orchestrator",
@@ -32,4 +33,5 @@ __all__ = [
     "BenchmarkReport",
     "AgentMetrics",
     "TaskResult",
+    "ImproveMode",
 ]

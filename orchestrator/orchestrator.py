@@ -28,6 +28,9 @@ Usage as a script::
     python -m orchestrator --model-a glm-5.2:cloud --model-b deepseek-v4-pro:cloud \
         --task "What is 2+2?" --task "Write a haiku"
 
+    # Improve mode: benchmark, cross-improve, re-benchmark, apply or log
+    python -m orchestrator --mode improve --default-tasks --loops 3
+
 Or programmatically::
 
     from orchestrator.orchestrator import Orchestrator, BenchmarkTask
@@ -516,6 +519,13 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--default-tasks", action="store_true", default=False,
                    help="Run the built-in benchmark suite instead of prompting "
                         "interactively for a task.")
+    p.add_argument("--mode", choices=["benchmark", "improve"], default="benchmark",
+                   help="Run mode: 'benchmark' (default) runs a standard benchmark. "
+                        "'improve' runs a benchmark, then each agent improves the "
+                        "other's code, then re-benchmarks to decide if changes are kept.")
+    p.add_argument("--loops", type=int, default=1,
+                   help="Number of improve-mode loops (default: 1). "
+                        "Only used in improve mode.")
     p.add_argument("--interactive", action="store_true", default=False,
                    help="Force the interactive prompt for a task (this is the "
                         "default when --task and --default-tasks are not given).")
@@ -533,6 +543,78 @@ def _print_banner(args: argparse.Namespace, task_count: int) -> None:
     print(f"  Tasks:   {task_count}")
     print(f"  URL:     {args.ollama_url}")
     print()
+
+
+def _prompt_for_models(args: argparse.Namespace) -> argparse.Namespace:
+    """Interactively ask the user which models to use for Agent A and Agent B.
+
+    Called only when neither --model-a nor --model-b was passed on the CLI.
+    Offers the list of known models with sensible defaults.
+    """
+    from agentThree.config import available_models
+
+    models = available_models()
+    # Suggested defaults for the benchmark
+    default_a = "glm-5.2:cloud"
+    default_b = "deepseek-v4-pro:cloud"
+
+    # Make sure the suggested defaults are in the list even if the
+    # Ollama server didn't report them (cloud models may not appear).
+    for m in (default_a, default_b):
+        if m not in models:
+            models.append(m)
+    models = sorted(models)
+
+    print(f"{'='*70}")
+    header = _c("  ORCHESTRATOR - Model Selection", "bold", "bright_blue") if _colours() else "  ORCHESTRATOR - Model Selection"
+    print(header)
+    print(f"{'='*70}")
+    print()
+    print("  Available models:")
+    for i, m in enumerate(models, 1):
+        marker = ""
+        if m == default_a:
+            marker = _c("  <- Agent A default", "dim") if _colours() else "  <- Agent A default"
+        elif m == default_b:
+            marker = _c("  <- Agent B default", "dim") if _colours() else "  <- Agent B default"
+        print(f"    {i:>2}. {m}{marker}")
+    print()
+
+    # Agent A
+    while True:
+        hint = _c(f" [{default_a}]", "dim") if _colours() else f" [{default_a}]"
+        raw = input(f"  Agent A model{hint}: ").strip()
+        if not raw:
+            args.model_a = default_a
+            break
+        if raw.isdigit() and 1 <= int(raw) <= len(models):
+            args.model_a = models[int(raw) - 1]
+            break
+        if raw in models:
+            args.model_a = raw
+            break
+        print(f"  Unknown model '{raw}'. Type a name from the list or a number 1-{len(models)}.")
+
+    # Agent B
+    while True:
+        hint = _c(f" [{default_b}]", "dim") if _colours() else f" [{default_b}]"
+        raw = input(f"  Agent B model{hint}: ").strip()
+        if not raw:
+            args.model_b = default_b
+            break
+        if raw.isdigit() and 1 <= int(raw) <= len(models):
+            args.model_b = models[int(raw) - 1]
+            break
+        if raw in models:
+            args.model_b = raw
+            break
+        print(f"  Unknown model '{raw}'. Type a name from the list or a number 1-{len(models)}.")
+
+    print()
+    print(f"  Agent A: {_c(args.model_a, 'cyan') if _colours() else args.model_a}")
+    print(f"  Agent B: {_c(args.model_b, 'magenta') if _colours() else args.model_b}")
+    print()
+    return args
 
 
 def _prompt_for_tasks(args: argparse.Namespace) -> list[BenchmarkTask]:
@@ -588,6 +670,13 @@ def main() -> None:
     parser = _build_argparser()
     args = parser.parse_args()
 
+    # Interactive model selection when neither --model-a nor --model-b
+    # was passed on the command line.
+    model_a_passed = any(a in ("--model-a", "-ma") for a in sys.argv)
+    model_b_passed = any(a in ("--model-b", "-mb") for a in sys.argv)
+    if not model_a_passed and not model_b_passed:
+        args = _prompt_for_models(args)
+
     # Build task list -- three modes:
     #   1. --task flags given         -> use those tasks directly
     #   2. --default-tasks flag       -> built-in suite
@@ -601,28 +690,48 @@ def main() -> None:
     else:
         tasks = _prompt_for_tasks(args)
 
-    orch = Orchestrator(
-        model_a=args.model_a,
-        model_b=args.model_b,
-        tasks=tasks,
-        ollama_url=args.ollama_url,
-        temperature=args.temperature,
-        max_iterations=args.max_iter,
-        stream=args.stream,
-        verbose=args.verbose,
-    )
+    # Dispatch based on mode
+    if args.mode == "improve":
+        from orchestrator.improve_mode import ImproveMode
+        improve = ImproveMode(
+            model_a=args.model_a,
+            model_b=args.model_b,
+            tasks=tasks,
+            ollama_url=args.ollama_url,
+            temperature=args.temperature,
+            max_iterations=args.max_iter,
+            stream=args.stream,
+            verbose=args.verbose,
+            loops=args.loops,
+        )
+        try:
+            improve.run()
+        except KeyboardInterrupt:
+            print("\n\nImprove mode interrupted by user.")
+            sys.exit(1)
+    else:
+        orch = Orchestrator(
+            model_a=args.model_a,
+            model_b=args.model_b,
+            tasks=tasks,
+            ollama_url=args.ollama_url,
+            temperature=args.temperature,
+            max_iterations=args.max_iter,
+            stream=args.stream,
+            verbose=args.verbose,
+        )
 
-    try:
-        report = orch.run()
-    except KeyboardInterrupt:
-        print("\n\nBenchmark interrupted by user.")
-        sys.exit(1)
+        try:
+            report = orch.run()
+        except KeyboardInterrupt:
+            print("\n\nBenchmark interrupted by user.")
+            sys.exit(1)
 
-    Orchestrator.print_report(report)
+        Orchestrator.print_report(report)
 
-    if args.save:
-        saved_to = Orchestrator.save_report(report, args.save)
-        print(f"\nReport saved to: {_c(saved_to, 'green') if _colours() else saved_to}")
+        if args.save:
+            saved_to = Orchestrator.save_report(report, args.save)
+            print(f"\nReport saved to: {_c(saved_to, 'green') if _colours() else saved_to}")
 
 
 if __name__ == "__main__":

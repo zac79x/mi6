@@ -5,3 +5,4 @@
 /agentThree/*.log
 /orchestrator/__pycache__
 /*.log
+/__pycache__

@@ -4,6 +4,13 @@ A standalone benchmarking orchestrator that instantiates two `agentThree`
 instances (optionally with different models), runs a configurable set of
 benchmark prompts against each one, and compares their performance.
 
+It supports two modes:
+
+- **`benchmark`** (default): run benchmarks and print/save a report.
+- **`improve`**: run a benchmark, then each agent improves the other's source
+  code, then re-benchmark. If both agents improved, keep the changes; otherwise
+  revert and log the proposals.
+
 ## What it measures
 
 | Metric | Description |
@@ -60,6 +67,8 @@ this order:
 
 | Option | Default | Description |
 | --- | --- | --- |
+| `--mode benchmark\|improve` | `benchmark` | Run mode: benchmark only, or improve (benchmark → cross-improve → re-benchmark) |
+| `--loops <n>` | `1` | Number of improve-mode loops (only used in improve mode) |
 | `--model-a` | `DEFAULT_MODEL` from config | Model for Agent A |
 | `--model-b` | `DEFAULT_MODEL` from config | Model for Agent B |
 | `--ollama-url` | `OLLAMA_URL` from config | Ollama API URL |
@@ -130,6 +139,55 @@ Orchestrator.save_report(report, "benchmark.json")
 | `word_count_tool` | tool_use | Count the words in this sentence: 'The quick brown fox jumps over the lazy dog.' |
 | `time_tool` | tool_use | What time is it right now? Use the appropriate tool. |
 
+## Improve mode
+
+Improve mode (`--mode improve`) runs a multi-step loop:
+
+1. **Baseline benchmark** – runs the standard benchmark on both agents.
+2. **Agent A improves Agent B** – Agent A is given the benchmark results and
+   asked to read and modify Agent B's source code (the `agentThree/` package)
+   to make it more efficient. Changes are applied directly to disk.
+3. **Agent B improves Agent A** – Agent B does the same for Agent A's code.
+4. **Post-improvement benchmark** – re-runs the benchmark with the improved
+   code.
+5. **Decision**:
+   - If **both** agents improved (lower composite score: tokens + time +
+     failures), the changes are **kept**.
+   - If either or both did not improve, all changes are **reverted** to the
+     original state, and the proposals + benchmark results are written to
+     an improvement log file in `orchestrator/improve_logs/`.
+6. The loop repeats for `--loops N` iterations (default: 1).
+
+### Composite score
+
+Lower is better:
+```
+score = total_tokens + 100 * total_time_seconds + 10000 * failed_tasks
+```
+
+### Improvement logs
+
+When no improvement is achieved, a JSON log is written to
+`orchestrator/improve_logs/improve_YYYYMMDD_HHMMSS_loopN.json` containing:
+- Baseline and post-improvement benchmark summaries
+- Scores for both agents
+- Which files were proposed for change
+- Agent answer summaries
+- The reason changes were not applied
+
+### Usage
+
+```bash
+# Single improve loop with default tasks
+python -m orchestrator --mode improve --default-tasks \
+    --model-a glm-5.2:cloud --model-b deepseek-v4-pro:cloud
+
+# 3 improve loops with custom tasks
+python -m orchestrator --mode improve --loops 3 \
+    --model-a glm-5.2:cloud --model-b deepseek-v4-pro:cloud \
+    --task "What is 2+2?" --task "Write a haiku"
+```
+
 ## Project layout
 
 ```
@@ -137,5 +195,7 @@ orchestrator/
   __init__.py       - Package init
   __main__.py       - Entry point (python -m orchestrator)
   orchestrator.py   - Main orchestrator: benchmark logic, reporting, CLI
+  improve_mode.py   - Improve mode: benchmark → cross-improve → re-benchmark
   readme.md         - This file
+  improve_logs/     - JSON logs from improve mode (auto-created)
 ```

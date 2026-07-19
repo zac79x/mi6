@@ -11,9 +11,9 @@ OLLAMA_URL: str = "http://localhost:11434/api/chat"
 
 #DEFAULT_MODEL: str = "minimax-m3:cloud"
 #DEFAULT_MODEL: str = "kimi-k2.7-code:cloud"
-DEFAULT_MODEL: str = "glm-5.2:cloud"
+#DEFAULT_MODEL: str = "glm-5.2:cloud"
 #DEFAULT_MODEL: str = "deepseek-v4-pro:cloud"
-#DEFAULT_MODEL: str = "deepseek-v4-flash:cloud"
+DEFAULT_MODEL: str = "deepseek-v4-flash:cloud"
 #DEFAULT_MODEL: str = "minimax-m2.7:cloud"
 #DEFAULT_MODEL: str = "gemma4:31b-cloud"
 
