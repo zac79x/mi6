@@ -1,4 +1,4 @@
-"""Module-level configuration constants for the agentTwo package."""
+"""Module-level configuration constants for the agentThree package."""
 
 from __future__ import annotations
 
@@ -26,13 +26,13 @@ STREAM: bool = True
 LOG_FORMAT: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
 #: Main log: lifecycle events, tool-call summaries, one-line HTTP summaries.
-LOG_FILE: str = "agentTwo/agent.log"
+LOG_FILE: str = "agentThree/agent.log"
 
 #: Full request/response bodies with the Ollama endpoint (DEBUG).
-HTTP_LOG_FILE: str = "agentTwo/agent.http.log"
+HTTP_LOG_FILE: str = "agentThree/agent.http.log"
 
 #: Full JSON payloads sent to the LLM, one block per request (INFO).
-LLM_PAYLOAD_LOG_FILE: str = "agentTwo/agent.llm_payload.log"
+LLM_PAYLOAD_LOG_FILE: str = "agentThree/agent.llm_payload.log"
 
 # ---- Filesystem / workspace safety -----------------------------------
 
@@ -47,6 +47,6 @@ ALLOWED_EXTENSION: tuple[str, ...] = (".py", ".md", ".txt", ".json", ".scad")
 # ---- Diff tool -------------------------------------------------------
 
 #: Path to a kdiff3-compatible binary. Set at startup by
-#: ``agentTwo.diff_tool.configure_diff_tool``; ``None`` means ask
+#: ``agentThree.diff_tool.configure_diff_tool``; ``None`` means ask
 #: the user / fall back to the text diff.
 DIFF_TOOL_PATH: str = "C:/Program Files/KDiff3/bin/kdiff3.exe"

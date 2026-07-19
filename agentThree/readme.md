@@ -27,8 +27,8 @@ python -m agentThree
 By default the agent requests **NDJSON streaming** from Ollama and prints the
 model's reply token-by-token as it arrives (including the `[think]` chain-of-
 thought block, when `/think on`).  The full prompt/response bodies are still
-logged to `agent.http.log` and `agent.llm_payload.log` after the stream is
-assembled, so nothing is lost.
+logged to `agentThree/agent.http.log` and `agentThree/agent.llm_payload.log`
+after the stream is assembled, so nothing is lost.
 
 If your model or terminal misbehaves with live tokens (e.g. the spinner is
 distracting, or you want to log the response in one piece), disable streaming
@@ -75,4 +75,5 @@ agentThree/
   tools_filesystem.py - Filesystem tools (read, create, update, list, compile)
   tools_misc.py       - Utility tools (calculate, word_count, get_current_time, recall_cached_result)
   tools_registry.py   - Tool dataclass and @tool decorator
+  tools_web.py        - Web tools (web_search, fetch_url, web_search_fetch)
 ```
