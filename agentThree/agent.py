@@ -37,6 +37,17 @@ CACHE_REF_HEX_LEN = 8
 RECALL_CACHED_RESULT = "recall_cached_result"
 DEFAULT_SESSION_FILE = ".agent_session_state.json"
 
+#: When the model makes the *same* tool call (same name + same primary
+#: argument) this many times **consecutively**, a nudge message is injected
+#: to break the loop.  3 is low enough to catch stuck read/read/read cycles
+#: quickly but high enough to allow legitimate retries after an error.
+REPEAT_NUDGE_THRESHOLD = 3
+
+#: When the model calls the *same* tool on the *same* target this many times
+#: **total** in one ``chat()`` session, a stronger nudge is injected telling
+#: it to wrap up and give a final answer.
+TOTAL_CALL_NUDGE_THRESHOLD = 5
+
 #: Callback signature: (kind, text) where kind is "content" or "thinking".
 #: Used by the streaming HTTP path to push tokens to the console live.
 TokenCallback = Callable[[str, str], None]
@@ -530,6 +541,15 @@ class agentThree:
         use_spinner = not self.stream
         on_token = self._make_stream_callback()
 
+        # Track repeated tool calls to detect and break stuck loops where
+        # the model re-reads or re-does the same action over and over
+        # without ever producing a final answer.  When a threshold is
+        # reached we inject a nudge user-message that tells the model to
+        # stop repeating and wrap up.
+        _repeat_last_key: str | None = None
+        _repeat_count: int = 0
+        _call_counts: dict[str, int] = {}
+
         try:
             while True:
                 for i in range(self.max_iterations):
@@ -585,16 +605,64 @@ class agentThree:
                             except json.JSONDecodeError:
                                 fn_args = {}
                         result = self._execute_tool_call(tc)
+                        call_key = self._call_key_for(fn_name, fn_args)
                         self.messages.append({
                             "role": "tool",
                             "content": result,
-                            "_call_key": self._call_key_for(fn_name, fn_args),
+                            "_call_key": call_key,
                         })
                         if self.verbose:
                             preview = result if len(result) <= 120 else result[:120] + "..."
                             tag = _colour("[tool]", "bold", "bright_magenta")
                             name_col = _colour(fn_name, "magenta")
                             print(f"  {tag} {name_col}(...) -> {preview}")
+
+                        # ------------------------------------------------- #
+                        # Repeated-tool-call detection                      #
+                        # ------------------------------------------------- #
+                        # When the model calls the same tool with the same
+                        # primary argument repeatedly, it is likely stuck in
+                        # a loop (e.g. re-reading a file it already has, or
+                        # re-applying an update it already made).  We inject
+                        # a nudge user-message to prompt it to either try a
+                        # different approach or produce a final answer.
+                        _call_counts[call_key] = _call_counts.get(call_key, 0) + 1
+                        if call_key == _repeat_last_key:
+                            _repeat_count += 1
+                        else:
+                            _repeat_last_key = call_key
+                            _repeat_count = 1
+
+                        _nudge: str | None = None
+                        if _repeat_count >= REPEAT_NUDGE_THRESHOLD:
+                            _nudge = (
+                                f"[SYSTEM] You have called '{fn_name}' with the same arguments "
+                                f"{_repeat_count} consecutive times. The result has not changed. "
+                                f"You already have this information. Stop calling this tool again "
+                                f"and either try a different approach or provide your final text "
+                                f"answer to the user."
+                            )
+                            # Reset so the model gets a fresh chance before
+                            # we nudge again.
+                            _repeat_last_key = None
+                            _repeat_count = 0
+                        elif _call_counts[call_key] >= TOTAL_CALL_NUDGE_THRESHOLD:
+                            _nudge = (
+                                f"[SYSTEM] You have called '{fn_name}' on this target "
+                                f"{_call_counts[call_key]} times total in this conversation. "
+                                f"You should already have all the information you need. "
+                                f"Please provide your final answer to the user now."
+                            )
+
+                        if _nudge:
+                            self.messages.append({"role": "user", "content": _nudge})
+                            logger.warning(
+                                "Injected repetition nudge after %d consecutive / %d total calls to %r",
+                                _repeat_count, _call_counts[call_key], call_key,
+                            )
+                            if self.verbose:
+                                tag = _colour("[nudge]", "bold", "bright_red")
+                                print(f"  {tag} Repetition detected – told model to wrap up.")
 
                 logger.warning("Reached max_iterations=%d without a final answer", self.max_iterations)
                 self.state = "idle"

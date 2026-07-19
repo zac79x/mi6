@@ -147,6 +147,7 @@ class AgentCompleter(Completer if _HAS_PTK else object):
         ("/max_iter", "set max tool-calling iterations"),
         ("/think", "enable/disable chain-of-thought display"),
         ("/stream", "enable/disable live token streaming from the LLM"),
+        ("/model", "set or show the current LLM model (tab-completes known models)"),
         ("/kdiff", "set the kdiff3 binary path"),
         ("/compact", "compact the conversation history in place"),
         ("/listcache", "list cached tool-result refs and sizes"),
@@ -180,6 +181,13 @@ class AgentCompleter(Completer if _HAS_PTK else object):
             candidates = ["on", "off", "yes", "no", "true", "false", "1", "0"]
         elif head == "/stream":
             candidates = ["on", "off", "yes", "no", "true", "false", "1", "0"]
+        elif head == "/model":
+            # Lazy import to avoid circular dependency at module load time.
+            try:
+                from agentThree.config import available_models
+                candidates = available_models()
+            except Exception:
+                candidates = []
         for cand in candidates:
             if cand.startswith(arg):
                 yield Completion(cand, start_position=-len(arg), display=cand, style="bg:ansigreen fg:ansiblack")

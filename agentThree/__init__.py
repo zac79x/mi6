@@ -10,6 +10,7 @@ from agentThree import tools_misc
 from agentThree import tools_filesystem
 from agentThree import tools_web
 from agentThree import diff_tool
+from agentThree import a2a_tools  # noqa: F401  - registers A2A tools
 
 from agentThree.agent import agentThree
 from agentThree.tools_registry import tool

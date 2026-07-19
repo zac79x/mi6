@@ -11,7 +11,7 @@ from agentThree.cli_ui import (
     AgentCompleter, ColouredPrompt, c, colours_enabled, info as ui_info,
     success as ui_success, warn as ui_warn, error as ui_error, dim as ui_dim, banner as ui_banner,
 )
-from agentThree.config import DEFAULT_MODEL, DIFF_TOOL_PATH, LOG_FILE, OLLAMA_URL
+from agentThree.config import DEFAULT_MODEL, DIFF_TOOL_PATH, LOG_FILE, OLLAMA_URL, available_models
 from agentThree.logging_setup import logger
 from agentThree.tools_registry import _TOOL_REGISTRY
 
@@ -25,6 +25,7 @@ Commands:
   /max_iter <n>     set max tool-calling iterations, e.g. /max_iter 10
   /think on|off     enable/disable display of the model's chain-of-thought
   /stream on|off    enable/disable live token streaming from the LLM
+  /model [name]     set or show the current LLM model (tab-completes from config.py)
   /compact          compact the in-memory conversation history in place
   /listcache        list the cached tool-result refs and their sizes
   /save [path]      save the current session to disk (default: .agent_session_state.json)
@@ -123,6 +124,35 @@ def _handle_command(cmd: str, agent: agentThree) -> bool:
         agent.stream = new_state
         ui_success(f"[streaming {'enabled' if new_state else 'disabled'}]")
         logger.info("User %s streaming", "enabled" if new_state else "disabled")
+        print()
+        return True
+
+    if head == "/model":
+        if len(parts) == 1:
+            # Show current model and the available candidates.
+            models = available_models()
+            ui_info(f"[current model: {agent.model}]")
+            if models:
+                ui_dim("Available models (from config.py):")
+                for m in models:
+                    marker = " *" if m == agent.model else ""
+                    print(f"    {m}{marker}")
+            else:
+                ui_warn("(no models found in config.py)")
+            logger.info("User ran /model (show): current=%s, available=%s", agent.model, models)
+            print()
+            return True
+        if len(parts) > 2:
+            ui_warn("Usage: /model [name]   (name is optional; blank shows current model)")
+            print()
+            return True
+        new_model = parts[1]
+        models = available_models()
+        agent.model = new_model
+        if models and new_model not in models:
+            ui_warn(f"[note: {new_model!r} is not in the config.py model list {models}]")
+        ui_success(f"[model set to {new_model}]")
+        logger.info("User set model to %s (was in config list: %s)", new_model, new_model in models if models else "n/a")
         print()
         return True
 
