@@ -22,6 +22,24 @@ ollama serve
 python -m agentThree
 ```
 
+## Streaming
+
+By default the agent requests **NDJSON streaming** from Ollama and prints the
+model's reply token-by-token as it arrives (including the `[think]` chain-of-
+thought block, when `/think on`).  The full prompt/response bodies are still
+logged to `agent.http.log` and `agent.llm_payload.log` after the stream is
+assembled, so nothing is lost.
+
+If your model or terminal misbehaves with live tokens (e.g. the spinner is
+distracting, or you want to log the response in one piece), disable streaming
+with:
+
+```
+/stream off
+```
+
+The `STREAM` config flag in `config.py` controls the default on startup.
+
 ## REPL commands
 
 | Command | Description |
@@ -33,6 +51,7 @@ python -m agentThree
 | `/temp [value]` | Set sampling temperature |
 | `/max_iter <n>` | Set max tool-calling iterations |
 | `/think on\|off` | Enable/disable chain-of-thought display |
+| `/stream on\|off` | Enable/disable live token streaming from the LLM |
 | `/compact` | Compact conversation history in place |
 | `/listcache` | List cached tool-result refs |
 | `/save [path]` | Save session to disk |
@@ -44,10 +63,10 @@ python -m agentThree
 agentThree/
   __init__.py         - Package init; imports submodules and re-exports public API
   __main__.py         - `python -m agentThree` entry point
-  agent.py            - The agentThree class: core loop, Ollama HTTP, compaction, cache
+  agent.py            - The agentThree class: core loop, Ollama HTTP, streaming, compaction, cache
   approval.py         - "Keep going?" prompt for iteration limit
   cli_ui.py           - ANSI colours, prompt_toolkit prompt, tab completion, Spinner
-  config.py           - Configuration constants
+  config.py           - Configuration constants (model, URL, stream flag, etc.)
   diff_tool.py        - kdiff3 configuration and diff-approval workflow
   logging_setup.py    - Centralized logging configuration
   readme.md           - This file

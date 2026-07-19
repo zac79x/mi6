@@ -5,14 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 import time
-from typing import Any
+from typing import Any, Callable
 
 import requests
 
-from agentThree.config import DEFAULT_MODEL, OLLAMA_URL
+from agentThree.config import DEFAULT_MODEL, OLLAMA_URL, STREAM
 from agentThree.approval import request_continue_approval
-from agentThree.logging_setup import llm_payload_logger, logger, safe_json, truncate
+from agentThree.logging_setup import http_logger, llm_payload_logger, logger, safe_json, truncate
 from agentThree.tools_registry import Tool, _TOOL_REGISTRY
 
 try:
@@ -36,6 +37,10 @@ CACHE_REF_HEX_LEN = 8
 RECALL_CACHED_RESULT = "recall_cached_result"
 DEFAULT_SESSION_FILE = ".agent_session_state.json"
 
+#: Callback signature: (kind, text) where kind is "content" or "thinking".
+#: Used by the streaming HTTP path to push tokens to the console live.
+TokenCallback = Callable[[str, str], None]
+
 
 class agentThree:
     def __init__(
@@ -49,6 +54,7 @@ class agentThree:
         temperature: float | None = None,
         show_thinking: bool = True,
         cache_threshold_chars: int = CACHE_THRESHOLD_CHARS,
+        stream: bool = STREAM,
     ) -> None:
         self.model = model
         self.ollama_url = ollama_url
@@ -56,6 +62,7 @@ class agentThree:
         self.verbose = verbose
         self.temperature = temperature
         self.show_thinking = show_thinking
+        self.stream = stream
 
         if cache_threshold_chars < 0:
             raise ValueError(f"cache_threshold_chars must be >= 0, got {cache_threshold_chars}")
@@ -112,8 +119,8 @@ class agentThree:
         self._session_start_time = time.time()
 
         logger.info(
-            "Agent initialised | model=%s | url=%s | max_iterations=%d | temperature=%s | show_thinking=%s | cache_threshold_chars=%d | tools=%s",
-            self.model, self.ollama_url, self.max_iterations, self.temperature, self.show_thinking, self.cache_threshold_chars, [t.name for t in self.tools],
+            "Agent initialised | model=%s | url=%s | max_iterations=%d | temperature=%s | show_thinking=%s | stream=%s | cache_threshold_chars=%d | tools=%s",
+            self.model, self.ollama_url, self.max_iterations, self.temperature, self.show_thinking, self.stream, self.cache_threshold_chars, [t.name for t in self.tools],
         )
 
     @staticmethod
@@ -128,8 +135,9 @@ class agentThree:
         turns = sum(1 for msg in self.messages if msg.get("role") == "user")
         temp_str = "default" if self.temperature is None else f"{self.temperature}"
         think_str = "on" if self.show_thinking else "off"
+        stream_str = "on" if self.stream else "off"
         return (
-            f" LLM: {self.model} | state: {self.state} | temp: {temp_str} | think: {think_str} "
+            f" LLM: {self.model} | state: {self.state} | temp: {temp_str} | think: {think_str} | stream: {stream_str} "
             f"| tokens: {self._format_tokens(self.session_prompt_tokens)} in / {self._format_tokens(self.session_completion_tokens)} out "
             f"| calls: {self.llm_call_count} | turns: {turns} "
         )
@@ -201,7 +209,7 @@ class agentThree:
             )
         return out
 
-    def _call_ollama(self) -> dict:
+    def _build_payload(self) -> dict[str, Any]:
         wire_messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt},
             *self._build_wire_messages(),
@@ -209,48 +217,163 @@ class agentThree:
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": wire_messages,
-            "stream": False,
+            "stream": self.stream,
         }
         if self.temperature is not None:
             payload["options"] = {"temperature": float(self.temperature)}
         if self.tools:
             payload["tools"] = [t.to_ollama_schema() for t in self.tools]
+        return payload
 
+    def _log_request(self, payload: dict[str, Any]) -> None:
         payload_json = safe_json(payload)
         banner_line = "=" * 72
-        llm_payload_logger.info("%s\nLLM REQUEST  ->  %s\n%s\n%s\n%s", banner_line, self.ollama_url, banner_line, payload_json, banner_line)
-        logger.debug("HTTP request to %s\n%s", self.ollama_url, payload_json)
+        llm_payload_logger.info(
+            "%s\nLLM REQUEST  ->  %s\n%s\n%s\n%s",
+            banner_line, self.ollama_url, banner_line, payload_json, banner_line,
+        )
+        http_logger.debug("HTTP request to %s (stream=%s)\n%s", self.ollama_url, self.stream, payload_json)
 
+    def _post_ollama(self, payload: dict[str, Any]) -> requests.Response:
+        """POST the payload and return the response object. Caller owns it."""
         t0 = time.time()
         try:
-            resp = requests.post(self.ollama_url, json=payload, timeout=500)
-            elapsed = time.time() - t0
-            try:
-                body_for_log = safe_json(resp.json()) if resp.ok else truncate(resp.text, 500)
-            except Exception:
-                body_for_log = truncate(resp.text, 500)
-            logger.debug("HTTP response status=%d, elapsed=%.2fs | body\n%s", resp.status_code, elapsed, body_for_log)
-            resp.raise_for_status()
-            data = resp.json()
+            resp = requests.post(self.ollama_url, json=payload, stream=self.stream, timeout=500)
         except requests.exceptions.Timeout as exc:
             logger.error("Timeout calling Ollama after %.2fs: %s", time.time() - t0, exc)
-            self.state = "error"
-            raise
-        except requests.exceptions.HTTPError as exc:
-            body = exc.response.text if exc.response is not None else ""
-            logger.error("HTTP error from Ollama: %s | body=%s", exc, truncate(body, 500))
             self.state = "error"
             raise
         except requests.exceptions.RequestException as exc:
             logger.error("RequestException calling Ollama: %s", exc)
             self.state = "error"
             raise
-        except json.JSONDecodeError as exc:
-            logger.error("Failed to decode JSON response from Ollama: %s", exc)
-            self.state = "error"
-            raise
+        return resp
 
+    def _accumulate_token(self, acc: dict[str, Any], chunk: dict[str, Any]) -> None:
+        """Merge one NDJSON chunk from a streaming response into ``acc``.
+
+        ``acc`` ends up with the same shape as a non-streaming response
+        (``message``, ``done``, ``prompt_eval_count``, ``eval_count``,
+        ``done_reason``, ...).
+        """
+        msg = chunk.get("message") or {}
+        content_delta = msg.get("content") or ""
+        thinking_delta = msg.get("thinking") or ""
+        if content_delta:
+            acc["message"].setdefault("content", "")
+            acc["message"]["content"] += content_delta
+        if thinking_delta:
+            acc["message"].setdefault("thinking", "")
+            acc["message"]["thinking"] += thinking_delta
+        # Tool calls: Ollama streams the full function object in the
+        # final chunk (or a single chunk), so we just replace by index.
+        if "tool_calls" in msg:
+            tcs = msg.get("tool_calls")
+            if isinstance(tcs, list):
+                acc["message"].setdefault("tool_calls", [])
+                for i, tc in enumerate(tcs):
+                    if i < len(acc["message"]["tool_calls"]) and isinstance(tc, dict):
+                        existing = acc["message"]["tool_calls"][i] or {}
+                        if isinstance(existing, dict):
+                            acc["message"]["tool_calls"][i] = {**existing, **tc}
+                        else:
+                            acc["message"]["tool_calls"][i] = tc
+                    else:
+                        acc["message"]["tool_calls"].append(tc)
+        for k in ("done", "done_reason", "model", "created_at",
+                  "prompt_eval_count", "eval_count", "total_duration",
+                  "load_duration", "prompt_eval_duration"):
+            if k in chunk and chunk[k] is not None:
+                acc[k] = chunk[k]
+
+    def _stream_ollama(
+        self,
+        payload: dict[str, Any],
+        on_token: TokenCallback | None = None,
+    ) -> dict[str, Any]:
+        """POST with stream=True, push tokens to ``on_token``, return an
+        accumulated dict shaped like a non-streaming response."""
+        self._log_request(payload)
+        t0 = time.time()
+        resp = self._post_ollama(payload)
+        try:
+            if resp.status_code >= 400:
+                body = resp.text
+                elapsed = time.time() - t0
+                logger.error("HTTP error from Ollama: status=%d, elapsed=%.2fs | body=%s", resp.status_code, elapsed, truncate(body, 500))
+                http_logger.debug("HTTP response status=%d, elapsed=%.2fs | body\n%s", resp.status_code, elapsed, body)
+                self.state = "error"
+                resp.raise_for_status()
+
+            acc: dict[str, Any] = {"message": {}, "done": False}
+            line_count = 0
+            try:
+                for raw in resp.iter_lines(decode_unicode=True):
+                    if not raw:
+                        continue
+                    line_count += 1
+                    try:
+                        chunk = json.loads(raw)
+                    except json.JSONDecodeError as exc:
+                        logger.error("Failed to decode streaming chunk line #%d: %s | raw=%s", line_count, exc, truncate(raw, 200))
+                        continue
+                    if on_token is not None:
+                        msg = chunk.get("message") or {}
+                        # Per ollamaStreaming.md, emit thinking before
+                        # content so a mixed chunk renders reasoning first.
+                        if msg.get("thinking"):
+                            on_token("thinking", msg["thinking"])
+                        if msg.get("content"):
+                            on_token("content", msg["content"])
+                    self._accumulate_token(acc, chunk)
+            except requests.exceptions.ChunkedEncodingError as exc:
+                # Common when the user hits Ctrl-C mid-stream; let the
+                # KeyboardInterrupt handler in chat() decide what to do.
+                logger.warning("Stream interrupted (chunked encoding error): %s", exc)
+                raise
+
+            elapsed = time.time() - t0
+            http_logger.debug(
+                "HTTP streaming response: status=%d, elapsed=%.2fs, %d line(s)\n%s",
+                resp.status_code, elapsed, line_count, safe_json(acc),
+            )
+            logger.debug("Received streamed response from Ollama in %.2fs | body\n%s", elapsed, safe_json(acc))
+            return acc
+        finally:
+            resp.close()
+
+    def _call_ollama_blocking(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Non-streaming path: one POST, one JSON body."""
+        self._log_request(payload)
+        t0 = time.time()
+        resp = self._post_ollama(payload)
+        try:
+            elapsed = time.time() - t0
+            try:
+                body_for_log = safe_json(resp.json()) if resp.ok else truncate(resp.text, 500)
+            except Exception:
+                body_for_log = truncate(resp.text, 500)
+            http_logger.debug("HTTP response status=%d, elapsed=%.2fs | body\n%s", resp.status_code, elapsed, body_for_log)
+            logger.debug("HTTP response status=%d, elapsed=%.2fs | body\n%s", resp.status_code, elapsed, body_for_log)
+            try:
+                resp.raise_for_status()
+            except requests.exceptions.HTTPError as exc:
+                body = exc.response.text if exc.response is not None else ""
+                logger.error("HTTP error from Ollama: %s | body=%s", exc, truncate(body, 500))
+                self.state = "error"
+                raise
+            data = resp.json()
+        finally:
+            resp.close()
         logger.debug("Received response from Ollama in %.2fs | body\n%s", elapsed, safe_json(data))
+        return data
+
+    def _call_ollama(self, on_token: TokenCallback | None = None) -> dict[str, Any]:
+        payload = self._build_payload()
+        if self.stream:
+            data = self._stream_ollama(payload, on_token=on_token)
+        else:
+            data = self._call_ollama_blocking(payload)
 
         try:
             self.llm_call_count += 1
@@ -330,9 +453,82 @@ class agentThree:
                 return f"{name}@{subject}"
         return name
 
+    def _print_stream_header(self) -> None:
+        """Print the 'Agent> ' banner. Called once before the first
+        streamed token.  Skipped when ``verbose`` is off."""
+        if not self.verbose:
+            return
+        sys.stdout.write(_colour("Agent> ", "bold", "bright_yellow"))
+        sys.stdout.flush()
+
+    def _make_stream_callback(self) -> TokenCallback | None:
+        """Return a token callback that prints live, or None if not streaming.
+
+        Follows the Ollama streaming pattern (ollamaStreaming.md): an
+        ``in_thinking`` flag tracks the thinking→content phase transition so
+        the ``[think]`` header is emitted only once at the start of the
+        reasoning trace and an ``[answer]`` separator is printed when the
+        model switches to its final answer.  ``in_thinking`` is tracked
+        even when ``show_thinking`` is off so the transition is always
+        detected.
+        """
+        if not self.stream or not self.verbose:
+            return None
+
+        header_printed = {"value": False}
+        in_thinking = {"value": False}
+
+        def cb(kind: str, text: str) -> None:
+            if not text:
+                return
+            if not header_printed["value"]:
+                self._print_stream_header()
+                header_printed["value"] = True
+            if kind == "thinking":
+                if not in_thinking["value"]:
+                    in_thinking["value"] = True
+                    if self.show_thinking:
+                        # Print the thinking header once, on its own line,
+                        # at the start of the reasoning trace (not on every
+                        # chunk), so it is visually distinct from the answer.
+                        tag = _colour("[think]", "bold", "bright_blue")
+                        sys.stdout.write(tag + "\n")
+                        sys.stdout.flush()
+                if self.show_thinking:
+                    sys.stdout.write(text)
+                    sys.stdout.flush()
+            else:  # content
+                if in_thinking["value"]:
+                    in_thinking["value"] = False
+                    if self.show_thinking:
+                        # Clear separator between the reasoning trace and
+                        # the final answer, mirroring ollamaStreaming.md's
+                        # '\n\nAnswer:' transition.  The [answer] tag makes
+                        # it obvious where the model's reply begins.
+                        sep = _colour("[answer]", "bold", "bright_green")
+                        sys.stdout.write("\n" + sep + "\n")
+                        sys.stdout.flush()
+                sys.stdout.write(text)
+                sys.stdout.flush()
+
+        return cb
+
+    def _finalize_stream_print(self) -> None:
+        """End the streamed output with a newline so the status bar
+        (or any subsequent line) lands on its own line."""
+        if not self.verbose:
+            return
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
     def chat(self, user_message: str) -> str:
         logger.debug("User message:\n%s", user_message)
         self.messages.append({"role": "user", "content": user_message})
+
+        # When streaming, the spinner would fight the live token output,
+        # so we skip it and let the callback print the header + tokens.
+        use_spinner = not self.stream
+        on_token = self._make_stream_callback()
 
         try:
             while True:
@@ -341,8 +537,15 @@ class agentThree:
                     self.state = "thinking"
                     self.print_status_bar()
                     try:
-                        with Spinner("thinking...", elapsed=True):
-                            data = self._call_ollama()
+                        if use_spinner:
+                            with Spinner("thinking...", elapsed=True):
+                                data = self._call_ollama(on_token=None)
+                        else:
+                            data = self._call_ollama(on_token=on_token)
+                    except KeyboardInterrupt:
+                        logger.info("Chat interrupted during LLM stream at iteration %d", i + 1)
+                        self.state = "idle"
+                        raise
                     except Exception as exc:
                         logger.exception("Iteration %d failed during Ollama call", i + 1)
                         self.state = "error"
@@ -352,10 +555,17 @@ class agentThree:
                     logger.debug("Assistant message object:\n%s", safe_json(message))
                     self.messages.append(message)
 
-                    thinking = message.get("thinking")
-                    if self.show_thinking and thinking and self.verbose:
-                        tag = _colour("[think]", "bold", "bright_blue")
-                        print(f"  {tag} {truncate(str(thinking), 400)}")
+                    if self.stream:
+                        # Stream is done for this iteration; make sure we
+                        # end with a newline before any further output.
+                        self._finalize_stream_print()
+                    else:
+                        # Non-streaming: emit the thinking block (if any)
+                        # after the fact, as a single truncated line.
+                        thinking = message.get("thinking")
+                        if self.show_thinking and thinking and self.verbose:
+                            tag = _colour("[think]", "bold", "bright_blue")
+                            print(f"  {tag} {truncate(str(thinking), 400)}")
 
                     tool_calls = message.get("tool_calls") or []
                     if not tool_calls:
@@ -395,7 +605,8 @@ class agentThree:
             self.state = "idle"
             print()
             if self.verbose:
-                print(_colour("[interrupted by user - task stopped]", "bold", "bright_yellow") if _colours_enabled() else "[interrupted by user - task stopped]")
+                note = _colour("[interrupted by user - task stopped]", "bold", "bright_yellow") if _colours_enabled() else "[interrupted by user - task stopped]"
+                print(note)
             return "[interrupted by user - task stopped]"
 
     def compact_history(self) -> dict[str, int]:
@@ -440,11 +651,13 @@ class agentThree:
             "model": self.model, "ollama_url": self.ollama_url,
             "max_iterations": self.max_iterations, "verbose": self.verbose,
             "temperature": self.temperature, "show_thinking": self.show_thinking,
+            "stream": self.stream,
             "cache_threshold_chars": self.cache_threshold_chars, "system_prompt": self.system_prompt,
         }
 
     def _apply_settings(self, settings: dict[str, Any]) -> None:
-        for key in ("model", "ollama_url", "max_iterations", "verbose", "temperature", "show_thinking", "cache_threshold_chars", "system_prompt"):
+        for key in ("model", "ollama_url", "max_iterations", "verbose", "temperature",
+                    "show_thinking", "stream", "cache_threshold_chars", "system_prompt"):
             if key in settings:
                 setattr(self, key, settings[key])
 

@@ -24,6 +24,7 @@ Commands:
   /temp <value>     set sampling temperature, e.g. /temp 0.7  (blank = default)
   /max_iter <n>     set max tool-calling iterations, e.g. /max_iter 10
   /think on|off     enable/disable display of the model's chain-of-thought
+  /stream on|off    enable/disable live token streaming from the LLM
   /compact          compact the in-memory conversation history in place
   /listcache        list the cached tool-result refs and their sizes
   /save [path]      save the current session to disk (default: .agent_session_state.json)
@@ -110,6 +111,18 @@ def _handle_command(cmd: str, agent: agentThree) -> bool:
         agent.show_thinking = new_state
         ui_success(f"[thinking display {'enabled' if new_state else 'disabled'}]")
         logger.info("User %s thinking display", "enabled" if new_state else "disabled")
+        print()
+        return True
+
+    if head == "/stream":
+        if len(parts) != 2 or parts[1].lower() not in {"on", "off", "true", "false", "1", "0", "yes", "no"}:
+            ui_warn("Usage: /stream on | /stream off")
+            print()
+            return True
+        new_state = parts[1].lower() in {"on", "true", "1", "yes"}
+        agent.stream = new_state
+        ui_success(f"[streaming {'enabled' if new_state else 'disabled'}]")
+        logger.info("User %s streaming", "enabled" if new_state else "disabled")
         print()
         return True
 
@@ -239,7 +252,9 @@ def main() -> None:
         if user_input.startswith("/") and _handle_command(user_input, agent):
             continue
 
-        print(c("Agent> ", "bold", "bright_yellow"), end="", flush=True)
+        # The agent is responsible for printing its own header ("Agent> ")
+        # and its answer. In streaming mode, tokens are emitted live; in
+        # blocking mode, the full answer is printed after chat() returns.
         try:
             answer = agent.chat(user_input)
         except KeyboardInterrupt:
@@ -255,7 +270,9 @@ def main() -> None:
             answer = f"[error: {exc}]"
 
         agent.state = "idle"
-        print(answer)
+        if not agent.stream:
+            print(c("Agent> ", "bold", "bright_yellow"), end="", flush=True)
+            print(answer)
         agent.print_status_bar()
         print()
         logger.info("Printed agent answer to console (%d chars)", len(answer))

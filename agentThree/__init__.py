@@ -8,6 +8,7 @@ from agentThree import config
 from agentThree import logging_setup
 from agentThree import tools_misc
 from agentThree import tools_filesystem
+from agentThree import tools_web
 from agentThree import diff_tool
 
 from agentThree.agent import agentThree

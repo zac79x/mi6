@@ -146,6 +146,7 @@ class AgentCompleter(Completer if _HAS_PTK else object):
         ("/temp", "set sampling temperature"),
         ("/max_iter", "set max tool-calling iterations"),
         ("/think", "enable/disable chain-of-thought display"),
+        ("/stream", "enable/disable live token streaming from the LLM"),
         ("/kdiff", "set the kdiff3 binary path"),
         ("/compact", "compact the conversation history in place"),
         ("/listcache", "list cached tool-result refs and sizes"),
@@ -176,6 +177,8 @@ class AgentCompleter(Completer if _HAS_PTK else object):
         elif head in ("/save", "/restore"):
             candidates = [f for f in self.extra_files if f.endswith(".json")]
         elif head == "/think":
+            candidates = ["on", "off", "yes", "no", "true", "false", "1", "0"]
+        elif head == "/stream":
             candidates = ["on", "off", "yes", "no", "true", "false", "1", "0"]
         for cand in candidates:
             if cand.startswith(arg):
