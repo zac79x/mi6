@@ -200,20 +200,14 @@ def _ddg_search(query: str, max_results: int) -> list[dict[str, str]]:
 
 
 # --------------------------------------------------------------------- #
-# Tool parameter schemas (explicit, with descriptions)
+# Tool parameter schemas (compact, with minimal descriptions)
 # --------------------------------------------------------------------- #
 
 _WEB_SEARCH_PARAMS: dict = {
     "type": "object",
     "properties": {
-        "query": {
-            "type": "string",
-            "description": "The search query string.",
-        },
-        "max_results": {
-            "type": "integer",
-            "description": "Maximum number of results to return (1-10). Default 5.",
-        },
+        "query": {"type": "string", "description": "The search query string."},
+        "max_results": {"type": "integer", "description": "Maximum number of results to return (1-10). Default 5."},
     },
     "required": ["query"],
 }
@@ -221,14 +215,8 @@ _WEB_SEARCH_PARAMS: dict = {
 _FETCH_URL_PARAMS: dict = {
     "type": "object",
     "properties": {
-        "url": {
-            "type": "string",
-            "description": "Absolute http(s) URL of the page to fetch.",
-        },
-        "max_chars": {
-            "type": "integer",
-            "description": "Truncate returned text to this many characters. Default 20000.",
-        },
+        "url": {"type": "string", "description": "Absolute http(s) URL of the page to fetch."},
+        "max_chars": {"type": "integer", "description": "Truncate returned text to this many characters. Default 20000."},
     },
     "required": ["url"],
 }
@@ -236,18 +224,9 @@ _FETCH_URL_PARAMS: dict = {
 _WEB_SEARCH_FETCH_PARAMS: dict = {
     "type": "object",
     "properties": {
-        "query": {
-            "type": "string",
-            "description": "The search query string.",
-        },
-        "max_results": {
-            "type": "integer",
-            "description": "How many of the top search results to fetch (1-5). Default 3.",
-        },
-        "max_chars_per_page": {
-            "type": "integer",
-            "description": "Truncate each fetched page to this many characters. Default 4000.",
-        },
+        "query": {"type": "string", "description": "The search query string."},
+        "max_results": {"type": "integer", "description": "How many of the top search results to fetch (1-5). Default 3."},
+        "max_chars_per_page": {"type": "integer", "description": "Truncate each fetched page to this many characters. Default 4000."},
     },
     "required": ["query"],
 }

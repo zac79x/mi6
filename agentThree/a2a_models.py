@@ -330,18 +330,22 @@ def agent_card(
     security_schemes: dict | None = None,
     security: list | None = None,
     documentation_url: str | None = None,
+    extra_interfaces: list[dict] | None = None,
 ) -> dict:
+    interfaces: list[dict] = [
+        {
+            "url": url,
+            "protocolBinding": "HTTP+JSON",
+            "protocolVersion": A2A_PROTOCOL_VERSION,
+        }
+    ]
+    if extra_interfaces:
+        interfaces.extend(extra_interfaces)
     card: dict = {
         "name": name,
         "description": description,
         "version": version,
-        "supportedInterfaces": [
-            {
-                "url": url,
-                "protocolBinding": "HTTP+JSON",
-                "protocolVersion": A2A_PROTOCOL_VERSION,
-            }
-        ],
+        "supportedInterfaces": interfaces,
         "capabilities": capabilities or {
             "streaming": True,
             "pushNotifications": True,

@@ -621,11 +621,19 @@ def build_card(
     base_url: str,
     skills: list[dict] | None = None,
 ) -> dict[str, Any]:
-    """Build the Agent Card for this server."""
+    """Build the Agent Card for this server.
+
+    Advertises two protocol bindings so clients can discover the correct
+    endpoint URLs:
+
+    * **HTTP+JSON** (REST) at ``{base_url}`` — used for ``/message:send``,
+      ``/tasks/{id}``, etc.
+    * **JSONRPC** at ``{base_url}/rpc`` — used for JSON-RPC 2.0 calls.
+    """
     return agent_card(
         name=name,
         description=description,
-        url=f"{base_url}/rpc",
+        url=base_url,  # REST base URL (not /rpc!)
         skills=skills or [],
         capabilities={
             "streaming": True,
@@ -634,6 +642,15 @@ def build_card(
         },
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
+        # Add a second interface for JSON-RPC so the client can discover
+        # the correct /rpc endpoint for JSON-RPC calls.
+        extra_interfaces=[
+            {
+                "url": f"{base_url}/rpc",
+                "protocolBinding": "JSONRPC",
+                "protocolVersion": A2A_PROTOCOL_VERSION,
+            },
+        ],
     )
 
 

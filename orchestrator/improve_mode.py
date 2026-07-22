@@ -227,17 +227,24 @@ def _extract_applied_changes(agent: agentThree) -> dict[str, str]:
         content = msg.get("content", "")
         if not isinstance(content, str):
             continue
-        # The update_file / create_file tools return JSON with a path field
+        # The update_file / create_file tools return a dict that gets
+        # str()'d by _execute_tool_call.  That may produce either valid JSON
+        # (double quotes) or a Python repr (single quotes).  Try JSON first,
+        # fall back to ast.literal_eval for Python dict reprs.
         try:
             result = json.loads(content)
-            if isinstance(result, dict) and result.get("ok"):
-                path = result.get("path", "")
-                if path:
-                    fname = os.path.basename(path)
-                    if fname in _IMPROVABLE_FILES:
-                        changed_files.add(fname)
         except (json.JSONDecodeError, TypeError):
-            pass
+            try:
+                import ast
+                result = ast.literal_eval(content)
+            except (ValueError, SyntaxError, TypeError):
+                continue
+        if isinstance(result, dict) and result.get("ok"):
+            path = result.get("path", "")
+            if path:
+                fname = os.path.basename(path)
+                if fname in _IMPROVABLE_FILES:
+                    changed_files.add(fname)
 
     # Read back the current content of changed files
     changes: dict[str, str] = {}
@@ -398,7 +405,7 @@ class ImproveMode:
 
             # --- Step 2: Agent A improves Agent B ---
             print(f"\n  [{_c('2', 'bold', 'green') if coloured else '2'}] Agent A is improving Agent B's code...")
-            backup_b = _backup_agent_files(tempfile.mkdtemp(prefix="improve_b_"))
+            backup_b = _backup_agent_files(Path(tempfile.mkdtemp(prefix="improve_b_")))
 
             improver_a = self._make_improver_agent(self.model_a)
             prompt_a = _build_improve_prompt("B", baseline)
@@ -417,8 +424,7 @@ class ImproveMode:
             if not changes_a:
                 print("\n  Agent A made no code changes. Skipping Agent B improvement and re-benchmark.")
                 _write_improvement_log(
-                    loop, baseline, baseline, {}, {}, answer_a, "No changes from A.",
-                    "", False, "Agent A proposed no changes."
+                    loop, baseline, baseline, {}, {}, answer_a, "", False, "Agent A proposed no changes."
                 )
                 continue
 
@@ -426,7 +432,7 @@ class ImproveMode:
             # Note: at this point Agent A's changes to B's code are on disk.
             # We need to back up A's code before Agent B modifies it.
             print(f"\n  [{_c('3', 'bold', 'green') if coloured else '3'}] Agent B is improving Agent A's code...")
-            backup_a = _backup_agent_files(tempfile.mkdtemp(prefix="improve_a_"))
+            backup_a = _backup_agent_files(Path(tempfile.mkdtemp(prefix="improve_a_")))
 
             improver_b = self._make_improver_agent(self.model_b)
             prompt_b = _build_improve_prompt("A", baseline)

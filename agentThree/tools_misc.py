@@ -42,28 +42,24 @@ def _safe_eval(expr: str) -> float:
     return _eval(tree)
 
 
-@tool
+@tool(description="Evaluate a safe arithmetic expression like ``2 * (3 + 4)``.")
 def calculate(expression: str) -> str:
-    """Evaluate a safe arithmetic expression like ``2 * (3 + 4)``."""
     try:
         return str(_safe_eval(expression))
     except Exception as exc:
         return f"Error: {exc}"
 
 
-@tool
+@tool(description="Return the current local date and time.")
 def get_current_time() -> str:
-    """Return the current local date and time."""
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
-@tool
+@tool(description="Count the words in a piece of text.")
 def word_count(text: str) -> int:
-    """Count the words in a piece of text."""
     return len(text.split())
 
 
-@tool
+@tool(description="Retrieve the full content of a tool result that was compacted on the wire.")
 def recall_cached_result(ref: str) -> str:
-    """Retrieve the full content of a tool result that was compacted on the wire."""
     return ""

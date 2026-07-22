@@ -31,7 +31,7 @@ except ImportError:
         def __exit__(self, *a): pass
 
 
-CACHE_THRESHOLD_CHARS = 2_000
+CACHE_THRESHOLD_CHARS = 20000
 DEDUP_WINDOW = 5
 CACHE_REF_HEX_LEN = 8
 RECALL_CACHED_RESULT = "recall_cached_result"
@@ -39,18 +39,43 @@ DEFAULT_SESSION_FILE = ".agent_session_state.json"
 
 #: When the model makes the *same* tool call (same name + same primary
 #: argument) this many times **consecutively**, a nudge message is injected
-#: to break the loop.  3 is low enough to catch stuck read/read/read cycles
-#: quickly but high enough to allow legitimate retries after an error.
-REPEAT_NUDGE_THRESHOLD = 3
+#: to break the loop.  Set to 2 to catch read/read cycles quickly while
+#: still allowing a single legitimate retry after an error.
+REPEAT_NUDGE_THRESHOLD = 2
 
 #: When the model calls the *same* tool on the *same* target this many times
 #: **total** in one ``chat()`` session, a stronger nudge is injected telling
 #: it to wrap up and give a final answer.
-TOTAL_CALL_NUDGE_THRESHOLD = 5
+TOTAL_CALL_NUDGE_THRESHOLD = 4
+
+#: When the model calls the *same tool name* (regardless of target) this
+#: many times **total** in one ``chat()`` session, a nudge is injected.
+#: This catches alternating-target loops (e.g. read file A, then list dir
+#: B, then read file A again) that evade the per-call-key threshold.
+TOOL_NAME_NUDGE_THRESHOLD = 3
+
+#: How many repetition nudges before we escalate to a final "stop calling
+#: tools" message.  At level 1 the model is told to try a different
+#: approach.  At level 2+ it is told to output its answer immediately.
+MAX_NUDGE_LEVEL = 2
 
 #: Callback signature: (kind, text) where kind is "content" or "thinking".
 #: Used by the streaming HTTP path to push tokens to the console live.
 TokenCallback = Callable[[str, str], None]
+
+#: Compact system prompt — kept terse to reduce per-call token overhead
+#: while preserving all behavioural instructions.
+_COMPACT_SYSTEM_PROMPT = (
+    "Helpful assistant with tools. Call tools when needed; "
+    "reply directly for final answers. create_file for new files, "
+    "update_file for modifications. Read readme.md before editing. "
+    "Batch independent tool calls. Large results: [cached:key -> N chars; ref=REF] "
+    "— use recall_cached_result(ref=REF) for full content. "
+    "Do NOT re-read files you have already read. "
+    "Do NOT re-list directories you have already listed. "
+    "Once you have enough context, proceed directly to writing code or giving the answer. "
+    "Do not announce what you are about to do — just do it."
+)
 
 
 class agentThree:
@@ -79,48 +104,22 @@ class agentThree:
             raise ValueError(f"cache_threshold_chars must be >= 0, got {cache_threshold_chars}")
         self.cache_threshold_chars = cache_threshold_chars
 
-        self.system_prompt = system_prompt or (
-            "You are a helpful assistant with access to tools. "
-            "When a tool would help answer the user, call it. "
-            "If a tool returns an error, explain it to the user. "
-            "When you have the final answer, reply normally without calling any tool. "
-            "Use `create_file` to create new files and `update_file` to modify "
-            "existing files (update_file will show you a diff before applying)."
-            "If you need to modify your agent scripts then read readme.md before"
-            "reading the python scripts code, so that you know which files to modify,"
-            "based on the user's request."
-            "\n\nReading files: prefer reading the whole file in a single call "
-            "rather than paging through it. For source files and most project "
-            "files, use `read_text_file(path)` (default `max_chars=40000` is "
-            "enough for typical files). Only fall back to `read_file_lines` "
-            "with a `start_line`/`num_lines` slice when (a) `read_text_file` "
-            "truncated the file and you need a specific later section, or "
-            "(b) the file is genuinely too large to fit in one read. "
-            "`read_file_lines` has a default `num_lines` of 2000, which "
-            "covers an entire typical source file in a single call - "
-            "there is no need to paginate in 25-, 100- or even 500-line "
-            "chunks. Each paginated call costs a full LLM round-trip, "
-            "so always prefer one large read over several small ones. "
-            "If you do need to slice (the file is genuinely > 2000 lines), "
-            "read at least 1000 lines per call and re-anchor `start_line` "
-            "to the last `Lines a..b` header you received."
-            "\n\nConversation-history compaction: large tool results in the "
-            "history are replaced by short stubs of the form "
-            "`[cached:<call_key> -> N chars; ref=<ref>]`. If you need the "
-            "full content back, call the `recall_cached_result` tool with "
-            "the `ref` from the stub. Identical consecutive tool results "
-            "are also collapsed to `[same as previous result; not repeated]` "
-            "- the first occurrence still has the full content. The result "
-            "of a `recall_cached_result` call is *always* sent to the model "
-            "verbatim on the next wire call - even when it is large enough "
-            "to be cached in isolation - so the model can actually read the "
-            "bytes it asked for."
-        )
+        self.system_prompt = system_prompt or _COMPACT_SYSTEM_PROMPT
 
         self.tools = tools or list(_TOOL_REGISTRY.values())
         self.tool_map: dict[str, Tool] = {t.name: t for t in self.tools}
+        self._tool_schemas: list[dict] = [t.to_ollama_schema() for t in self.tools]
         self.messages: list[dict[str, Any]] = []
         self._result_cache: dict[str, str] = {}
+
+        # Pre-compute the invariant parts of the LLM payload so
+        # ``_build_payload`` only has to splice in the wire messages.
+        self._base_payload: dict[str, Any] = {
+            "model": self.model,
+            "stream": self.stream,
+        }
+        if self.tools:
+            self._base_payload["tools"] = self._tool_schemas
 
         self.session_prompt_tokens = 0
         self.session_completion_tokens = 0
@@ -133,6 +132,10 @@ class agentThree:
             "Agent initialised | model=%s | url=%s | max_iterations=%d | temperature=%s | show_thinking=%s | stream=%s | cache_threshold_chars=%d | tools=%s",
             self.model, self.ollama_url, self.max_iterations, self.temperature, self.show_thinking, self.stream, self.cache_threshold_chars, [t.name for t in self.tools],
         )
+
+    # ------------------------------------------------------------------ #
+    # Public helpers
+    # ------------------------------------------------------------------ #
 
     @staticmethod
     def _format_tokens(n: int) -> str:
@@ -157,6 +160,10 @@ class agentThree:
         bar = self.render_status_bar()
         print(_colour(bar, "dim", "gray") if _colours_enabled() else bar)
 
+    # ------------------------------------------------------------------ #
+    # Cache helpers
+    # ------------------------------------------------------------------ #
+
     @staticmethod
     def _make_cache_ref(result: str) -> str:
         return hashlib.sha1(result.encode("utf-8", errors="replace")).hexdigest()[:CACHE_REF_HEX_LEN]
@@ -166,77 +173,160 @@ class agentThree:
         key = m.get("_call_key") or ""
         return key == RECALL_CACHED_RESULT or key.startswith(RECALL_CACHED_RESULT + "@")
 
+    # ------------------------------------------------------------------ #
+    # Wire-message building (compaction, caching, dedup)
+    # ------------------------------------------------------------------ #
+
     def _build_wire_messages(self) -> list[dict[str, Any]]:
+        """Build the message list sent over the wire.
+
+        Applies three optimisations to keep prompt-token usage low:
+
+        1. Strips ``thinking`` blocks from assistant messages (the model
+           does not need to re-read its own chain-of-thought).
+        2. Replaces large tool results with a compact ``[cached:…]`` stub
+           so the model only sees a short reference.
+        3. Deduplicates consecutive identical tool results.
+        4. Truncates large tool-call *arguments* (the model already
+           generated them and does not need them repeated).
+        """
         out: list[dict[str, Any]] = []
         recent_tool_results: list[str] = []
-        thinking_stripped = results_cached = results_deduped = recalls_preserved = 0
+        thinking_stripped = results_cached = results_deduped = args_truncated = 0
 
         for msg in self.messages:
-            m = dict(msg)
-            role = m.get("role")
+            role = msg.get("role")
 
+            # --- assistant message ----------------------------------------
             if role == "assistant":
-                if m.pop("thinking", None):
+                # Shallow-copy only when we need to mutate.
+                m: dict[str, Any] = {}
+                needs_copy = False
+
+                # Strip thinking (model doesn't need to re-read its own CoT).
+                if "thinking" in msg:
+                    needs_copy = True
                     thinking_stripped += 1
-                if not m.get("content") and m.get("tool_calls"):
-                    m.pop("content", None)
 
+                # Drop empty content when tool_calls are present.
+                has_tool_calls = bool(msg.get("tool_calls"))
+                if has_tool_calls and not msg.get("content"):
+                    needs_copy = True
+
+                # Truncate large tool-call argument values.
+                tcs = msg.get("tool_calls")
+                tcs_need_processing = tcs and any(
+                    isinstance(tc.get("function", {}).get("arguments", {}), dict)
+                    and any(
+                        isinstance(av, str) and len(av) > self.cache_threshold_chars
+                        for av in tc["function"]["arguments"].values()
+                    )
+                    for tc in tcs
+                ) if tcs else False
+
+                if needs_copy or tcs_need_processing:
+                    m = dict(msg)
+                    if "thinking" in m:
+                        m.pop("thinking", None)
+                    if has_tool_calls and not m.get("content"):
+                        m.pop("content", None)
+                    if tcs_need_processing:
+                        new_tcs = []
+                        for tc in tcs:
+                            new_tc = dict(tc)
+                            fn = dict(new_tc.get("function", {}) or {})
+                            args = fn.get("arguments")
+                            if isinstance(args, dict):
+                                new_args = dict(args)
+                                for ak, av in new_args.items():
+                                    if isinstance(av, str) and len(av) > self.cache_threshold_chars:
+                                        ref = self._make_cache_ref(av)
+                                        self._result_cache[ref] = av
+                                        new_args[ak] = f"[truncated: {len(av)} chars; ref={ref}]"
+                                        args_truncated += 1
+                                fn["arguments"] = new_args
+                            new_tc["function"] = fn
+                            new_tcs.append(new_tc)
+                        m["tool_calls"] = new_tcs
+                else:
+                    m = msg  # reuse original — no mutation needed
+
+            # --- tool message ---------------------------------------------
             elif role == "tool":
-                content = m.get("content", "") or ""
-                is_recall = self._is_recall_tool_message(m)
+                content = msg.get("content", "") or ""
+                is_recall = self._is_recall_tool_message(msg)
 
-                if is_recall:
-                    wire_content = content
-                    if len(content) > self.cache_threshold_chars:
-                        recalls_preserved += 1
-                elif len(content) > self.cache_threshold_chars:
+                if not is_recall and len(content) > self.cache_threshold_chars:
                     ref = self._make_cache_ref(content)
                     self._result_cache[ref] = content
-                    call_key = m.get("_call_key") or "tool"
+                    call_key = msg.get("_call_key") or "tool"
                     wire_content = f"[cached:{call_key} -> {len(content)} chars; ref={ref}]"
                 else:
                     wire_content = content
 
                 if wire_content and wire_content in recent_tool_results[-DEDUP_WINDOW:]:
-                    m["content"] = "[same as previous result; not repeated]"
+                    m = {"role": "tool", "content": "[same as previous result; not repeated]"}
                     results_deduped += 1
                 else:
                     if wire_content:
                         recent_tool_results.append(wire_content)
                     if not is_recall and len(content) > self.cache_threshold_chars:
-                        m["content"] = wire_content
+                        m = {"role": "tool", "content": wire_content}
                         results_cached += 1
+                    else:
+                        # Fast path: no caching needed, just strip _call_key.
+                        if "_call_key" in msg:
+                            m = dict(msg)
+                            m.pop("_call_key", None)
+                        else:
+                            m = msg
+                    if not m.get("content"):
+                        m = dict(m) if m is msg else m
+                        m["content"] = "(empty result)"
 
-                m.pop("_call_key", None)
-                if not m.get("content"):
-                    m["content"] = "(empty result)"
+            else:
+                m = msg  # user / system — pass through unchanged
 
             out.append(m)
 
-        if thinking_stripped or results_cached or results_deduped or recalls_preserved:
+        if thinking_stripped or results_cached or results_deduped or args_truncated:
             logger.debug(
-                "Wire-message compaction: stripped 'thinking' from %d, cached %d large tool result(s), shipped %d recall(s) verbatim, deduped %d consecutive duplicate(s). Cache size: %d entry/ies.",
-                thinking_stripped, results_cached, recalls_preserved, results_deduped, len(self._result_cache),
+                "Wire-message compaction: stripped 'thinking' from %d, cached %d large tool result(s), truncated %d large tool-call arg(s), deduped %d consecutive duplicate(s). Cache size: %d entry/ies.",
+                thinking_stripped, results_cached, args_truncated, results_deduped, len(self._result_cache),
             )
         return out
 
+    # ------------------------------------------------------------------ #
+    # Payload assembly
+    # ------------------------------------------------------------------ #
+
     def _build_payload(self) -> dict[str, Any]:
-        wire_messages: list[dict[str, Any]] = [
+        """Assemble the full JSON payload for the Ollama chat endpoint.
+
+        Uses the pre-computed ``_base_payload`` and only splices in the
+        system prompt and the (compacted) wire messages.
+        """
+        wire_messages = self._build_wire_messages()
+        payload: dict[str, Any] = dict(self._base_payload)
+        payload["messages"] = [
             {"role": "system", "content": self.system_prompt},
-            *self._build_wire_messages(),
+            *wire_messages,
         ]
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": wire_messages,
-            "stream": self.stream,
-        }
         if self.temperature is not None:
+            # Shallow-copy options so we don't mutate the base.
             payload["options"] = {"temperature": float(self.temperature)}
-        if self.tools:
-            payload["tools"] = [t.to_ollama_schema() for t in self.tools]
         return payload
 
-    def _log_request(self, payload: dict[str, Any]) -> None:
+    # ------------------------------------------------------------------ #
+    # Logging helpers
+    # ------------------------------------------------------------------ #
+
+    def _log_request(self, payload: dict[str, Any]) -> str:
+        """Log the request payload and return its JSON representation.
+
+        The JSON string is returned so callers can reuse it (avoiding a
+        second serialisation for the response log).
+        """
         payload_json = safe_json(payload)
         banner_line = "=" * 72
         llm_payload_logger.info(
@@ -244,6 +334,11 @@ class agentThree:
             banner_line, self.ollama_url, banner_line, payload_json, banner_line,
         )
         http_logger.debug("HTTP request to %s (stream=%s)\n%s", self.ollama_url, self.stream, payload_json)
+        return payload_json
+
+    # ------------------------------------------------------------------ #
+    # HTTP transport
+    # ------------------------------------------------------------------ #
 
     def _post_ollama(self, payload: dict[str, Any]) -> requests.Response:
         """POST the payload and return the response object. Caller owns it."""
@@ -304,7 +399,7 @@ class agentThree:
     ) -> dict[str, Any]:
         """POST with stream=True, push tokens to ``on_token``, return an
         accumulated dict shaped like a non-streaming response."""
-        self._log_request(payload)
+        _req_json = self._log_request(payload)
         t0 = time.time()
         resp = self._post_ollama(payload)
         try:
@@ -355,7 +450,7 @@ class agentThree:
 
     def _call_ollama_blocking(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Non-streaming path: one POST, one JSON body."""
-        self._log_request(payload)
+        _req_json = self._log_request(payload)
         t0 = time.time()
         resp = self._post_ollama(payload)
         try:
@@ -378,6 +473,10 @@ class agentThree:
             resp.close()
         logger.debug("Received response from Ollama in %.2fs | body\n%s", elapsed, safe_json(data))
         return data
+
+    # ------------------------------------------------------------------ #
+    # LLM call dispatch
+    # ------------------------------------------------------------------ #
 
     def _call_ollama(self, on_token: TokenCallback | None = None) -> dict[str, Any]:
         payload = self._build_payload()
@@ -405,6 +504,10 @@ class agentThree:
             logger.debug("Could not parse token usage from Ollama response", exc_info=True)
 
         return data
+
+    # ------------------------------------------------------------------ #
+    # Tool execution
+    # ------------------------------------------------------------------ #
 
     def _recall_cached_result(self, raw_args: dict) -> str:
         ref = (raw_args or {}).get("ref", "")
@@ -463,6 +566,10 @@ class agentThree:
                 subject = v if len(v) <= 80 else v[:77] + "..."
                 return f"{name}@{subject}"
         return name
+
+    # ------------------------------------------------------------------ #
+    # Streaming output helpers
+    # ------------------------------------------------------------------ #
 
     def _print_stream_header(self) -> None:
         """Print the 'Agent> ' banner. Called once before the first
@@ -532,6 +639,10 @@ class agentThree:
         sys.stdout.write("\n")
         sys.stdout.flush()
 
+    # ------------------------------------------------------------------ #
+    # Main chat loop
+    # ------------------------------------------------------------------ #
+
     def chat(self, user_message: str) -> str:
         logger.debug("User message:\n%s", user_message)
         self.messages.append({"role": "user", "content": user_message})
@@ -549,6 +660,8 @@ class agentThree:
         _repeat_last_key: str | None = None
         _repeat_count: int = 0
         _call_counts: dict[str, int] = {}
+        _tool_name_counts: dict[str, int] = {}
+        _nudge_level: int = 0
 
         try:
             while True:
@@ -627,6 +740,7 @@ class agentThree:
                         # a nudge user-message to prompt it to either try a
                         # different approach or produce a final answer.
                         _call_counts[call_key] = _call_counts.get(call_key, 0) + 1
+                        _tool_name_counts[fn_name] = _tool_name_counts.get(fn_name, 0) + 1
                         if call_key == _repeat_last_key:
                             _repeat_count += 1
                         else:
@@ -634,31 +748,46 @@ class agentThree:
                             _repeat_count = 1
 
                         _nudge: str | None = None
-                        if _repeat_count >= REPEAT_NUDGE_THRESHOLD:
+                        if _nudge_level >= MAX_NUDGE_LEVEL:
+                            # Escalated: force a final answer, no more tools.
                             _nudge = (
-                                f"[SYSTEM] You have called '{fn_name}' with the same arguments "
-                                f"{_repeat_count} consecutive times. The result has not changed. "
-                                f"You already have this information. Stop calling this tool again "
-                                f"and either try a different approach or provide your final text "
-                                f"answer to the user."
+                                "[SYSTEM] You are stuck in a repetition loop. "
+                                "Output your final answer NOW. "
+                                "Do not call any more tools."
                             )
-                            # Reset so the model gets a fresh chance before
-                            # we nudge again.
+                        elif _repeat_count >= REPEAT_NUDGE_THRESHOLD:
+                            _nudge_level += 1
+                            _nudge = (
+                                f"[SYSTEM] You called '{fn_name}' with the same args "
+                                f"{_repeat_count}x consecutively. The result hasn't changed. "
+                                f"Stop calling this tool. Try a different approach or give "
+                                f"your final answer."
+                            )
+                            # Reset consecutive counter but keep nudge_level
+                            # so the next repetition escalates.
                             _repeat_last_key = None
                             _repeat_count = 0
                         elif _call_counts[call_key] >= TOTAL_CALL_NUDGE_THRESHOLD:
+                            _nudge_level += 1
                             _nudge = (
-                                f"[SYSTEM] You have called '{fn_name}' on this target "
-                                f"{_call_counts[call_key]} times total in this conversation. "
-                                f"You should already have all the information you need. "
-                                f"Please provide your final answer to the user now."
+                                f"[SYSTEM] You called '{fn_name}' on this target "
+                                f"{_call_counts[call_key]}x total. You have all the info "
+                                f"you need. Give your final answer now."
+                            )
+                        elif _tool_name_counts[fn_name] >= TOOL_NAME_NUDGE_THRESHOLD:
+                            _nudge_level += 1
+                            _nudge = (
+                                f"[SYSTEM] You have called '{fn_name}' "
+                                f"{_tool_name_counts[fn_name]}x total across different targets. "
+                                f"You have enough information. Stop calling tools and "
+                                f"write your final answer or code now."
                             )
 
                         if _nudge:
                             self.messages.append({"role": "user", "content": _nudge})
                             logger.warning(
-                                "Injected repetition nudge after %d consecutive / %d total calls to %r",
-                                _repeat_count, _call_counts[call_key], call_key,
+                                "Injected repetition nudge (level %d) after %d consecutive / %d total calls to %r",
+                                _nudge_level, _repeat_count, _call_counts[call_key], call_key,
                             )
                             if self.verbose:
                                 tag = _colour("[nudge]", "bold", "bright_red")
@@ -676,6 +805,10 @@ class agentThree:
                 note = _colour("[interrupted by user - task stopped]", "bold", "bright_yellow") if _colours_enabled() else "[interrupted by user - task stopped]"
                 print(note)
             return "[interrupted by user - task stopped]"
+
+    # ------------------------------------------------------------------ #
+    # Session management
+    # ------------------------------------------------------------------ #
 
     def compact_history(self) -> dict[str, int]:
         before_count = len(self.messages)
@@ -728,6 +861,9 @@ class agentThree:
                     "show_thinking", "stream", "cache_threshold_chars", "system_prompt"):
             if key in settings:
                 setattr(self, key, settings[key])
+        # Rebuild base payload when model/stream changes.
+        self._base_payload["model"] = self.model
+        self._base_payload["stream"] = self.stream
 
     def save_session(self, path: str | None = None) -> str:
         target = os.path.abspath(path or DEFAULT_SESSION_FILE)
