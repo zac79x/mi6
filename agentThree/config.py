@@ -12,8 +12,8 @@ OLLAMA_URL: str = "http://localhost:11434/api/chat"
 #DEFAULT_MODEL: str = "minimax-m3:cloud"
 #DEFAULT_MODEL: str = "kimi-k2.7-code:cloud"
 #DEFAULT_MODEL: str = "glm-5.2:cloud"
-#DEFAULT_MODEL: str = "deepseek-v4-pro:cloud"
-DEFAULT_MODEL: str = "deepseek-v4-flash:cloud"
+DEFAULT_MODEL: str = "deepseek-v4-pro:cloud"
+#DEFAULT_MODEL: str = "deepseek-v4-flash:cloud"
 #DEFAULT_MODEL: str = "minimax-m2.7:cloud"
 #DEFAULT_MODEL: str = "gemma4:31b-cloud"
 
@@ -97,7 +97,8 @@ WORKSPACE_ROOT: Path = Path(os.getcwd()).resolve()
 #: Extensions that mutating file tools may create/modify. Must be a
 #: tuple (or any iterable accepted by ``str.endswith``) - a bare ``str``
 #: of several extensions would silently let all of them through.
-ALLOWED_EXTENSION: tuple[str, ...] = (".py", ".md", ".txt", ".json", ".scad", ".html")
+ALLOWED_EXTENSION: tuple[str, ...] = (".py", ".md", ".txt", ".json", ".scad"
+										, ".html", ".c", ".h", ".cpp")
 
 # ---- Diff tool -------------------------------------------------------
 

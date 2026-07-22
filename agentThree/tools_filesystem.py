@@ -9,7 +9,7 @@ from typing import Union
 
 from agentThree.diff_tool import run_diff_tool, request_update_approval
 from agentThree.logging_setup import logger
-from agentThree.safety import validate_path
+from agentThree.safety import validate_path, validate_directory_path
 from agentThree.tools_registry import tool
 
 
@@ -112,6 +112,23 @@ def create_file(path: str, content: str) -> dict:
     try:
         target.write_text(content, encoding="utf-8")
         logger.info("Created file: %s (%d bytes)", path, len(content))
+        return {"ok": True, "action": "create", "path": path, "reason": None}
+    except OSError as exc:
+        return {"ok": False, "action": "refused", "path": path, "reason": str(exc)}
+
+
+@tool
+def create_directory(path: str) -> dict:
+    """Create a NEW directory (and any missing parent directories). Does NOT require user approval."""
+    try:
+        target = validate_directory_path(path)
+    except ValueError as exc:
+        return {"ok": False, "action": "refused", "path": path, "reason": str(exc)}
+    if target.exists():
+        return {"ok": False, "action": "refused", "path": path, "reason": "Directory already exists."}
+    try:
+        target.mkdir(parents=True, exist_ok=False)
+        logger.info("Created directory: %s", path)
         return {"ok": True, "action": "create", "path": path, "reason": None}
     except OSError as exc:
         return {"ok": False, "action": "refused", "path": path, "reason": str(exc)}

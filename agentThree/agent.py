@@ -48,12 +48,6 @@ REPEAT_NUDGE_THRESHOLD = 2
 #: it to wrap up and give a final answer.
 TOTAL_CALL_NUDGE_THRESHOLD = 4
 
-#: When the model calls the *same tool name* (regardless of target) this
-#: many times **total** in one ``chat()`` session, a nudge is injected.
-#: This catches alternating-target loops (e.g. read file A, then list dir
-#: B, then read file A again) that evade the per-call-key threshold.
-TOOL_NAME_NUDGE_THRESHOLD = 3
-
 #: How many repetition nudges before we escalate to a final "stop calling
 #: tools" message.  At level 1 the model is told to try a different
 #: approach.  At level 2+ it is told to output its answer immediately.
@@ -74,7 +68,10 @@ _COMPACT_SYSTEM_PROMPT = (
     "Do NOT re-read files you have already read. "
     "Do NOT re-list directories you have already listed. "
     "Once you have enough context, proceed directly to writing code or giving the answer. "
-    "Do not announce what you are about to do — just do it."
+    "Do not announce what you are about to do — just do it. "
+    "Be concise in your responses — no filler, no recapping what you did. "
+    "When a task requires multiple files, create ALL of them — do not stop after "
+    "the first one. Write or update every file you planned to produce."
 )
 
 
@@ -172,6 +169,27 @@ class agentThree:
     def _is_recall_tool_message(m: dict[str, Any]) -> bool:
         key = m.get("_call_key") or ""
         return key == RECALL_CACHED_RESULT or key.startswith(RECALL_CACHED_RESULT + "@")
+
+    @staticmethod
+    def _is_error_result(result: str) -> bool:
+        """Return True if a tool result string indicates failure.
+
+        Tools return either a plain string (e.g. ``"Error: ..."``) or a
+        JSON-serialised dict containing ``{"ok": False, ...}``.  This
+        helper checks both patterns so the nudge logic can distinguish
+        repeated successes from repeated failures.
+        """
+        if not result:
+            return False
+        s = result.strip()
+        if s.startswith("Error:") or s.startswith("Error "):
+            return True
+        # Dict-style results are JSON-serialised by _execute_tool_call
+        # (str(result) on a dict produces "{'ok': False, ...}" with single
+        # quotes).  Check for the key cheaply.
+        if "'ok': False" in s or '"ok": false' in s or '"ok":False' in s:
+            return True
+        return False
 
     # ------------------------------------------------------------------ #
     # Wire-message building (compaction, caching, dedup)
@@ -660,7 +678,6 @@ class agentThree:
         _repeat_last_key: str | None = None
         _repeat_count: int = 0
         _call_counts: dict[str, int] = {}
-        _tool_name_counts: dict[str, int] = {}
         _nudge_level: int = 0
 
         try:
@@ -728,7 +745,18 @@ class agentThree:
                             preview = result if len(result) <= 120 else result[:120] + "..."
                             tag = _colour("[tool]", "bold", "bright_magenta")
                             name_col = _colour(fn_name, "magenta")
-                            print(f"  {tag} {name_col}(...) -> {preview}")
+                            # Build a compact arg summary: key=value, key=value
+                            arg_parts = []
+                            for ak, av in (fn_args or {}).items():
+                                if isinstance(av, str):
+                                    av_s = av if len(av) <= 60 else av[:57] + "..."
+                                else:
+                                    av_s = str(av)
+                                    if len(av_s) > 60:
+                                        av_s = av_s[:57] + "..."
+                                arg_parts.append(f"{ak}={av_s!r}")
+                            arg_summary = ", ".join(arg_parts) if arg_parts else ""
+                            print(f"  {tag} {name_col}({arg_summary}) -> {preview}")
 
                         # ------------------------------------------------- #
                         # Repeated-tool-call detection                      #
@@ -739,8 +767,13 @@ class agentThree:
                         # re-applying an update it already made).  We inject
                         # a nudge user-message to prompt it to either try a
                         # different approach or produce a final answer.
+                        #
+                        # When the repeated call *failed*, the nudge changes
+                        # to point out the error rather than telling the
+                        # model to stop — the model may be using wrong
+                        # arguments and needs to fix them.
                         _call_counts[call_key] = _call_counts.get(call_key, 0) + 1
-                        _tool_name_counts[fn_name] = _tool_name_counts.get(fn_name, 0) + 1
+                        _tool_failed = self._is_error_result(result)
                         if call_key == _repeat_last_key:
                             _repeat_count += 1
                         else:
@@ -757,32 +790,40 @@ class agentThree:
                             )
                         elif _repeat_count >= REPEAT_NUDGE_THRESHOLD:
                             _nudge_level += 1
-                            _nudge = (
-                                f"[SYSTEM] You called '{fn_name}' with the same args "
-                                f"{_repeat_count}x consecutively. The result hasn't changed. "
-                                f"Stop calling this tool. Try a different approach or give "
-                                f"your final answer."
-                            )
+                            if _tool_failed:
+                                _nudge = (
+                                    f"[SYSTEM] You called '{fn_name}' with the same args "
+                                    f"{_repeat_count}x consecutively and it keeps failing. "
+                                    f"You are using this tool incorrectly — check your "
+                                    f"arguments and the error message. Try a different "
+                                    f"approach or give your final answer."
+                                )
+                            else:
+                                _nudge = (
+                                    f"[SYSTEM] You called '{fn_name}' with the same args "
+                                    f"{_repeat_count}x consecutively. The result hasn't changed. "
+                                    f"Stop calling this tool. Try a different approach or give "
+                                    f"your final answer."
+                                )
                             # Reset consecutive counter but keep nudge_level
                             # so the next repetition escalates.
                             _repeat_last_key = None
                             _repeat_count = 0
                         elif _call_counts[call_key] >= TOTAL_CALL_NUDGE_THRESHOLD:
                             _nudge_level += 1
-                            _nudge = (
-                                f"[SYSTEM] You called '{fn_name}' on this target "
-                                f"{_call_counts[call_key]}x total. You have all the info "
-                                f"you need. Give your final answer now."
-                            )
-                        elif _tool_name_counts[fn_name] >= TOOL_NAME_NUDGE_THRESHOLD:
-                            _nudge_level += 1
-                            _nudge = (
-                                f"[SYSTEM] You have called '{fn_name}' "
-                                f"{_tool_name_counts[fn_name]}x total across different targets. "
-                                f"You have enough information. Stop calling tools and "
-                                f"write your final answer or code now."
-                            )
-
+                            if _tool_failed:
+                                _nudge = (
+                                    f"[SYSTEM] You called '{fn_name}' on this target "
+                                    f"{_call_counts[call_key]}x total and it keeps failing. "
+                                    f"Review the error messages above, fix your arguments, "
+                                    f"or try a different tool."
+                                )
+                            else:
+                                _nudge = (
+                                    f"[SYSTEM] You called '{fn_name}' on this target "
+                                    f"{_call_counts[call_key]}x total. You have all the info "
+                                    f"you need. Give your final answer now."
+                                )
                         if _nudge:
                             self.messages.append({"role": "user", "content": _nudge})
                             logger.warning(
