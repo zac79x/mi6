@@ -153,6 +153,7 @@ class AgentCompleter(Completer if _HAS_PTK else object):
         ("/listcache", "list cached tool-result refs and sizes"),
         ("/save", "save the current session to disk"),
         ("/restore", "restore a previously saved session"),
+        ("/agents", "show, set, or clear agent markup files"),
     ]
 
     def __init__(self, extra_files: list[str] | None = None) -> None:
@@ -188,6 +189,20 @@ class AgentCompleter(Completer if _HAS_PTK else object):
                 candidates = available_models()
             except Exception:
                 candidates = []
+        elif head == "/agents":
+            candidates = ["clear"]
+            try:
+                from agentThree.config import WORKSPACE_ROOT
+                import os as _os
+                known = ["AGENTS.md", "CLAUDE.md", "GEMINI.md", "COPILOT.md",
+                         "CURSOR.md", "WINDSURF.md", "CODEX.md", "AIDER.md",
+                         "CONTINUE.md", "DEVIN.md"]
+                for name in known:
+                    p = _os.path.join(WORKSPACE_ROOT, name)
+                    if _os.path.isfile(p):
+                        candidates.append(name.lower())
+            except Exception:
+                pass
         for cand in candidates:
             if cand.startswith(arg):
                 yield Completion(cand, start_position=-len(arg), display=cand, style="bg:ansigreen fg:ansiblack")

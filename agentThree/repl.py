@@ -30,6 +30,7 @@ Commands:
   /listcache        list the cached tool-result refs and their sizes
   /save [path]      save the current session to disk (default: .agent_session_state.json)
   /restore [path]   restore a previously saved session (default: .agent_session_state.json)
+  /agents [file]    show, set, or clear agent markup files (AGENTS.md, CLAUDE.md, etc.)
 """
 
 
@@ -229,6 +230,43 @@ def _handle_command(cmd: str, agent: agentThree) -> bool:
         ui_success(f"Session restored from {report['path']} ({report['messages']} messages, {report['cache_entries']} cache entries).")
         logger.info("User restored session from %s (%d messages, %d cache entries)", report["path"], report["messages"], report["cache_entries"])
         print()
+        return True
+
+    if head == "/agents":
+        info_state = agent.list_markup_files()
+        if len(parts) == 1:
+            # Show current state
+            ui_info(f"[agent markup files]")
+            if info_state["explicit"]:
+                print(f"  Explicit: {info_state['explicit']}")
+                print(f"  (auto-discovery overridden)")
+            elif info_state["discovered"]:
+                print(f"  Discovered: {', '.join(info_state['discovered'])}")
+            else:
+                ui_dim("  (none discovered — no AGENTS.md, CLAUDE.md, etc. found in workspace)")
+            if info_state["active"]:
+                print(f"  Active: {', '.join(info_state['active'])}")
+            else:
+                ui_dim("  Active: (none — using base system prompt only)")
+            print()
+            logger.info("User ran /agents (show): %s", info_state)
+            return True
+        arg = parts[1].strip()
+        if arg.lower() in {"clear", "none", "reset", "auto"}:
+            msg = agent.set_markup_file(None)
+            ui_success(f"[{msg}]")
+            print()
+            logger.info("User cleared explicit markup file via /agents")
+            return True
+        try:
+            msg = agent.set_markup_file(arg)
+            ui_success(f"[{msg}]")
+            print()
+            logger.info("User set markup file to %s", arg)
+        except FileNotFoundError as exc:
+            ui_error(f"{exc}")
+            print()
+            return True
         return True
 
     return False

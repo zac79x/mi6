@@ -74,6 +74,25 @@ _COMPACT_SYSTEM_PROMPT = (
     "the first one. Write or update every file you planned to produce."
 )
 
+#: Known agent markup filenames (case-insensitive) that may exist in the
+#: workspace root.  When discovered, their content is prepended to the
+#: system prompt so the LLM picks up project-specific conventions.
+_AGENT_MARKUP_FILES: list[str] = [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    "COPILOT.md",
+    "CURSOR.md",
+    "WINDSURF.md",
+    "CODEX.md",
+    "AIDER.md",
+    "CONTINUE.md",
+    "DEVIN.md",
+]
+
+#: Separator between the base system prompt and discovered markup content.
+_MARKUP_SEPARATOR = "\n\n--- Project context (from {filename}) ---\n"
+
 
 class agentThree:
     def __init__(
@@ -102,6 +121,10 @@ class agentThree:
         self.cache_threshold_chars = cache_threshold_chars
 
         self.system_prompt = system_prompt or _COMPACT_SYSTEM_PROMPT
+        self._base_system_prompt = self.system_prompt
+        self._markup_files: list[str] = []
+        self._explicit_markup: str | None = None
+        self._discover_markup_files()
 
         self.tools = tools or list(_TOOL_REGISTRY.values())
         self.tool_map: dict[str, Tool] = {t.name: t for t in self.tools}
@@ -190,6 +213,94 @@ class agentThree:
         if "'ok': False" in s or '"ok": false' in s or '"ok":False' in s:
             return True
         return False
+
+    # ------------------------------------------------------------------ #
+    # Agent markup file auto-discovery
+    # ------------------------------------------------------------------ #
+
+    def _discover_markup_files(self) -> list[str]:
+        """Scan ``WORKSPACE_ROOT`` for known agent markup filenames.
+
+        Returns the list of discovered filenames (relative to the
+        workspace root) and stores it in ``self._markup_files``.
+        Discovery is case-insensitive: ``agents.md`` matches ``AGENTS.md``.
+        """
+        from agentThree.config import WORKSPACE_ROOT
+        discovered: list[str] = []
+        try:
+            entries = {e.lower(): e for e in os.listdir(WORKSPACE_ROOT)}
+        except OSError:
+            self._markup_files = []
+            return []
+        for marker in _AGENT_MARKUP_FILES:
+            actual = entries.get(marker.lower())
+            if actual and os.path.isfile(os.path.join(WORKSPACE_ROOT, actual)):
+                discovered.append(actual)
+        self._markup_files = discovered
+        self._rebuild_system_prompt()
+        return discovered
+
+    def set_markup_file(self, filename: str | None) -> str:
+        """Explicitly set or clear the agent markup file used in the system prompt.
+
+        ``filename`` must be a path relative to the workspace root.  Pass
+        ``None`` to clear the explicit override and fall back to
+        auto-discovery.
+        """
+        from agentThree.config import WORKSPACE_ROOT
+        if filename is None:
+            self._explicit_markup = None
+            self._discover_markup_files()
+            return "Cleared explicit markup file; reverted to auto-discovery."
+        candidate = os.path.join(WORKSPACE_ROOT, filename)
+        if not os.path.isfile(candidate):
+            raise FileNotFoundError(f"Markup file not found: {filename} (resolved to {candidate})")
+        self._explicit_markup = filename
+        self._rebuild_system_prompt()
+        return f"Markup file set to {filename}"
+
+    def _rebuild_system_prompt(self) -> None:
+        """Rebuild ``self.system_prompt`` from the base prompt plus any
+        discovered or explicitly-set markup file content."""
+        base = self._base_system_prompt
+        # Determine which file(s) to include.
+        if self._explicit_markup is not None:
+            from agentThree.config import WORKSPACE_ROOT
+            path = os.path.join(WORKSPACE_ROOT, self._explicit_markup)
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    content = fh.read().strip()
+                if content:
+                    self.system_prompt = base + _MARKUP_SEPARATOR.format(filename=self._explicit_markup) + content
+                    return
+            except OSError:
+                pass
+            self.system_prompt = base
+            return
+        # Auto-discovery: concatenate all discovered markup files.
+        if not self._markup_files:
+            self.system_prompt = base
+            return
+        from agentThree.config import WORKSPACE_ROOT
+        parts = [base]
+        for mf in self._markup_files:
+            path = os.path.join(WORKSPACE_ROOT, mf)
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    content = fh.read().strip()
+                if content:
+                    parts.append(_MARKUP_SEPARATOR.format(filename=mf) + content)
+            except OSError:
+                pass
+        self.system_prompt = "\n\n".join(parts)
+
+    def list_markup_files(self) -> dict[str, Any]:
+        """Return a summary of discovered and active markup files."""
+        return {
+            "discovered": list(self._markup_files),
+            "explicit": self._explicit_markup,
+            "active": [self._explicit_markup] if self._explicit_markup else list(self._markup_files),
+        }
 
     # ------------------------------------------------------------------ #
     # Wire-message building (compaction, caching, dedup)
@@ -895,11 +1006,15 @@ class agentThree:
             "temperature": self.temperature, "show_thinking": self.show_thinking,
             "stream": self.stream,
             "cache_threshold_chars": self.cache_threshold_chars, "system_prompt": self.system_prompt,
+            "base_system_prompt": self._base_system_prompt,
+            "markup_files": list(self._markup_files),
+            "explicit_markup": self._explicit_markup,
         }
 
     def _apply_settings(self, settings: dict[str, Any]) -> None:
         for key in ("model", "ollama_url", "max_iterations", "verbose", "temperature",
-                    "show_thinking", "stream", "cache_threshold_chars", "system_prompt"):
+                    "show_thinking", "stream", "cache_threshold_chars", "system_prompt",
+                    "base_system_prompt", "markup_files", "explicit_markup"):
             if key in settings:
                 setattr(self, key, settings[key])
         # Rebuild base payload when model/stream changes.
